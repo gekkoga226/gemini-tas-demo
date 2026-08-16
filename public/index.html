@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>作業区間アノテーション｜ローカル検証</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="app-header">
+    <div>
+      <p class="eyebrow">TEMPORAL ACTION SEGMENTATION</p>
+      <h1>作業区間アノテーション</h1>
+      <p class="subtitle">Geminiに依存せず操作を確認できるローカル検証版</p>
+    </div>
+    <div id="modeBadge" class="mode-badge">接続を確認中</div>
+  </header>
+
+  <main>
+    <section class="card input-card" aria-labelledby="inputTitle">
+      <div class="section-heading">
+        <div><span class="step">01</span><h2 id="inputTitle">入力を準備</h2></div>
+        <button id="demoInputButton" class="button secondary" type="button">サンプル入力（ファイル不要）</button>
+      </div>
+      <div class="drop-grid">
+        <label class="drop-zone" id="videoDrop">
+          <input id="videoInput" type="file" accept="video/mp4,.mp4">
+          <span class="file-kind">MP4</span>
+          <strong>作業動画</strong>
+          <span>クリックまたはドロップ</span>
+          <small id="videoMeta">未選択</small>
+        </label>
+        <label class="drop-zone" id="pdfDrop">
+          <input id="pdfInput" type="file" accept="application/pdf,.pdf">
+          <span class="file-kind">PDF</span>
+          <strong>作業標準書</strong>
+          <span>クリックまたはドロップ</span>
+          <small id="pdfMeta">未選択</small>
+        </label>
+      </div>
+      <div id="inputNotice" class="notice neutral">モックモードではファイル内容をGeminiへ送信しません。</div>
+      <div class="action-row">
+        <button id="startButton" class="button primary" type="button" disabled>解析開始</button>
+        <button id="cancelButton" class="button danger" type="button" hidden>中止</button>
+        <span id="inputSummary" class="muted">動画とPDFを選択するか、サンプル入力を使ってください。</span>
+      </div>
+    </section>
+
+    <section class="card status-card" aria-live="polite">
+      <div class="status-main">
+        <span id="statusDot" class="status-dot idle"></span>
+        <div><small>処理状態</small><strong id="statusText">待機中</strong></div>
+      </div>
+      <div class="status-time"><small>経過時間</small><strong id="elapsedText">00:00</strong></div>
+      <p id="statusMessage">入力を準備してください。</p>
+    </section>
+
+    <section id="workspace" class="workspace" hidden>
+      <div class="left-column">
+        <section class="card media-card">
+          <div class="section-heading compact"><div><span class="step">02</span><h2>動画とタイムライン</h2></div></div>
+          <div class="video-shell">
+            <video id="videoPlayer" controls preload="metadata"></video>
+            <div id="videoPlaceholder" class="video-placeholder">
+              <span>LOCAL MOCK</span>
+              <strong>サンプル入力では動画を使用しません</strong>
+            </div>
+          </div>
+          <div class="playback-meta"><span id="playbackTime">00:00:00 / 00:00:30</span><span id="activeSegmentLabel">該当する作業区間なし</span></div>
+          <div id="timeline" class="timeline" tabindex="0" aria-label="作業区間タイムライン">
+            <div id="timelineSegments"></div>
+            <div id="playhead" class="playhead"></div>
+          </div>
+          <p class="hint">区間またはタイムラインをクリックすると、その時刻へ移動します。確認・修正結果では両端をドラッグできます。</p>
+        </section>
+
+        <section class="card output-card">
+          <div class="section-heading compact"><div><span class="step">04</span><h2>JSON出力</h2></div><span id="dirtyBadge" class="dirty-badge clean">変更なし</span></div>
+          <div class="download-grid">
+            <button id="downloadPrediction" class="button secondary" type="button">AI予測JSON</button>
+            <button id="downloadReviewed" class="button primary" type="button">確認・修正済みJSON</button>
+          </div>
+          <p class="hint">内部ID、警告、モード名、API情報はJSONへ含めません。</p>
+        </section>
+      </div>
+
+      <section class="card editor-card">
+        <div class="section-heading compact"><div><span class="step">03</span><h2>区間を確認・修正</h2></div></div>
+        <div class="view-tabs" role="tablist">
+          <button id="reviewedTab" class="tab active" type="button">確認・修正結果</button>
+          <button id="predictionTab" class="tab" type="button">AI予測（原本）</button>
+        </div>
+        <div class="editor-tools">
+          <button id="addButton" class="icon-button" type="button">＋ 区間追加</button>
+          <button id="undoButton" class="icon-button" type="button" disabled>↶ Undo</button>
+          <button id="redoButton" class="icon-button" type="button" disabled>↷ Redo</button>
+        </div>
+        <div id="segmentList" class="segment-list"></div>
+        <div id="detailPanel" class="detail-panel">
+          <p class="empty-state">区間を選択してください。</p>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <dialog id="addDialog">
+    <form id="addForm" method="dialog">
+      <h2>作業区間を追加</h2>
+      <div class="form-grid">
+        <label>開始時刻<input name="start_time" required pattern="\d{2}:\d{2}:\d{2}"></label>
+        <label>終了時刻<input name="end_time" required pattern="\d{2}:\d{2}:\d{2}"></label>
+        <label>Job No.<input name="job_no"></label>
+        <label>標準書ページ<input name="page_number"></label>
+        <label class="wide">作業タイトル<input name="job_title"></label>
+      </div>
+      <p id="addError" class="form-error"></p>
+      <div class="dialog-actions"><button class="button secondary" value="cancel">キャンセル</button><button id="confirmAdd" class="button primary" value="default">追加</button></div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
