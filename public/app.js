@@ -1,5 +1,10 @@
 const SEGMENT_KEYS = ["start_time", "end_time", "duration_seconds", "job_no", "page_number", "job_title", "work_content", "hand_movement", "tools_and_parts"];
-const COLORS = ["#287d73", "#3972a9", "#bd6c2c", "#7a62a5", "#478d55", "#9a535b"];
+// 区間色は分類を意味しないため統一し、番号で区別する。
+// 選択、現在位置、警告はそれぞれ別の視覚表現を使う。
+const COLORS = ["#245f7d"];
+const MIN_SEGMENT_LABEL_WIDTH = 24;
+const MIN_SEGMENT_HANDLE_WIDTH = 14;
+const TIMELINE_ZOOMS = [1, 2, 4, 8];
 const LOCAL_MOCK_STAGES = ["準備中（ローカル模擬処理）", "解析中（ローカル模擬処理）", "結果を整形中（ローカル模擬処理）"];
 const REAL_STAGES = ["準備中（テキストのみ）", "Geminiの同期応答を待機中", "結果を整形中"];
 
@@ -25,8 +30,9 @@ const state = {
   selected: 0,
   view: "reviewed",
   currentTime: 0,
-  undo: null,
-  redo: null,
+  timelineZoom: 1,
+  undoStack: [],
+  redoStack: [],
   dirty: false,
   timestamp: "",
 };
@@ -42,6 +48,12 @@ function secondsToTime(value) {
   return [Math.floor(seconds / 3600), Math.floor((seconds % 3600) / 60), seconds % 60].map((part) => String(part).padStart(2, "0")).join(":");
 }
 function clone(value) { return JSON.parse(JSON.stringify(value)); }
+const UNDO_DEPTH = 20;
+function pushHistory(before) {
+  state.undoStack.push(clone(before));
+  if (state.undoStack.length > UNDO_DEPTH) state.undoStack.shift();
+  state.redoStack = [];
+}
 function cleanSegments(segments, reviewed = false) {
   return segments.map((segment) => Object.fromEntries(SEGMENT_KEYS.map((key) => [key, reviewed && key === "duration_seconds" ? timeToSeconds(segment.end_time) - timeToSeconds(segment.start_time) : segment[key]])));
 }
@@ -93,6 +105,20 @@ function toast(message) {
   const element = $("#toast");
   element.textContent = message; element.hidden = false;
   clearTimeout(toast.timer); toast.timer = setTimeout(() => { element.hidden = true; }, 3500);
+}
+function confirmAction({ title, message, acceptLabel = "続行", danger = false }) {
+  const dialog = $("#confirmDialog");
+  if (dialog.open) dialog.close("cancel");
+  $("#confirmTitle").textContent = title;
+  $("#confirmMessage").textContent = message;
+  $("#confirmAccept").textContent = acceptLabel;
+  dialog.classList.toggle("danger", danger);
+  dialog.returnValue = "cancel";
+  return new Promise((resolve) => {
+    dialog.addEventListener("close", () => resolve(dialog.returnValue === "confirm"), { once: true });
+    dialog.showModal();
+    $("#confirmCancel").focus();
+  });
 }
 function setStatus(kind, text, message) {
   $("#statusDot").className = `status-dot ${kind}`;
@@ -180,14 +206,21 @@ function useDemoInput() {
 
 async function startAnalysis() {
   if (state.running) return;
-  const replaceMessage = state.dirty
-    ? "新しい成功結果で現在の結果を置き換えます。未出力の修正は失われます。続けますか？"
-    : "新しい成功結果で現在の結果を置き換えます。続けますか？";
-  if (state.prediction.length && !confirm(replaceMessage)) return;
   const notice = state.session.mockMode
     ? "ローカル模擬処理を開始します。Geminiへの通信は行いません。"
-    : "Flashへテキストだけを同期送信します。選択した動画・PDFの内容は送信しません。続けますか？";
-  if (!confirm(notice)) return;
+    : "Flashへ固定テキストだけを同期送信します。選択した動画・PDFの内容は送信しません。";
+  const replaceMessage = state.prediction.length
+    ? state.dirty
+      ? " 現在の結果と未保存の修正は、新しい解析結果に置き換わります。"
+      : " 現在の結果は、新しい解析結果に置き換わります。"
+    : "";
+  const confirmed = await confirmAction({
+    title: "解析を開始しますか",
+    message: `${notice}${replaceMessage}`,
+    acceptLabel: "解析を開始",
+    danger: state.dirty,
+  });
+  if (!confirmed) return;
   state.running = true; state.cancelRequested = false; state.controller = new AbortController();
   $("#startButton").disabled = true; $("#cancelButton").hidden = false; beginProgress();
   try {
@@ -202,8 +235,8 @@ async function startAnalysis() {
     if (state.cancelRequested) return;
     state.prediction = clone(body.prediction); state.reviewed = clone(body.prediction);
     state.predictionWarnings = clone(body.warnings || []); state.warnings = validateSegments(state.reviewed); state.selected = 0; state.view = "reviewed";
-    state.undo = null; state.redo = null; state.dirty = false; state.timestamp = timestamp(); state.currentTime = 0;
-    $("#workspace").hidden = false; setStatus("done", "完了", state.session.mockMode ? "ローカルの模擬結果を表示しています。" : "Flashのテキスト同期結果を表示しています。実ファイルは送信していません。");
+    state.undoStack = []; state.redoStack = []; state.dirty = false; state.timestamp = timestamp(); state.currentTime = 0; state.timelineZoom = 1;
+    $("#timelineScroll").scrollLeft = 0; $("#workspace").hidden = false; setStatus("done", "完了", state.session.mockMode ? "ローカルの模擬結果を表示しています。" : "Flashのテキスト同期結果を表示しています。実ファイルは送信していません。");
     render();
   } catch (error) {
     if (!state.cancelRequested && error.name !== "AbortError") setStatus("error", "エラー", error.message);
@@ -221,63 +254,215 @@ function cancelAnalysis() {
 
 function currentSegments() { return state.view === "reviewed" ? state.reviewed : state.prediction; }
 function activeIndex() { return currentSegments().findIndex((segment) => timeToSeconds(segment.start_time) <= state.currentTime && state.currentTime < timeToSeconds(segment.end_time)); }
+function timelineTickLabel(seconds) {
+  if (maximumEnd() >= 3600) return secondsToTime(seconds);
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+function timelineStep(duration) {
+  const rough = duration / 6;
+  const steps = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 14400];
+  return steps.find((value) => value >= rough) || Math.ceil(rough / 3600) * 3600;
+}
+function timelineMinorStep(majorStep) {
+  const steps = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600];
+  return steps.filter((value) => value < majorStep && majorStep % value === 0 && value <= majorStep / 3).at(-1) || null;
+}
+function renderRuler() {
+  const ruler = $("#timelineRuler"); const duration = maximumEnd(); const step = timelineStep(duration); const minorStep = timelineMinorStep(step); const majorPoints = []; const minorPoints = [];
+  for (let second = 0; second < duration; second += step) majorPoints.push(second);
+  majorPoints.push(duration);
+  if (minorStep) {
+    for (let second = minorStep; second < duration; second += minorStep) {
+      if (second % step !== 0) minorPoints.push(second);
+    }
+  }
+  const minorTicks = minorPoints.map((second) => {
+    const tick = document.createElement("span");
+    tick.className = "ruler-tick minor";
+    tick.style.left = `${(second / duration) * 100}%`;
+    return tick;
+  });
+  const majorTicks = majorPoints.map((second, index) => {
+    const tick = document.createElement("span");
+    tick.className = `ruler-tick major${index === 0 ? " first" : ""}${index === majorPoints.length - 1 ? " last" : ""}`;
+    tick.style.left = `${(second / duration) * 100}%`;
+    tick.innerHTML = `<span class="ruler-label">${timelineTickLabel(second)}</span>`;
+    return tick;
+  });
+  ruler.replaceChildren(...minorTicks, ...majorTicks);
+}
+function sizeTimelineTrack() {
+  const scroll = $("#timelineScroll"); const width = Math.max(1, scroll.clientWidth) * state.timelineZoom;
+  $("#timelineTrack").style.width = `${width}px`;
+  return width;
+}
+function timelineSecondsAtClientX(clientX) {
+  const rect = $("#timelineTrack").getBoundingClientRect();
+  if (!rect.width) return 0;
+  return Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)) * maximumEnd();
+}
+function setTimelineScrollLeft(left) {
+  const scroll = $("#timelineScroll"); const maximum = Math.max(0, scroll.scrollWidth - scroll.clientWidth);
+  scroll.scrollLeft = Math.max(0, Math.min(maximum, left));
+}
+function ensureTimelineTimeVisible(seconds, center = false) {
+  const scroll = $("#timelineScroll"); const track = $("#timelineTrack");
+  if (!scroll.clientWidth || !track.clientWidth) return;
+  const x = (Math.max(0, Math.min(maximumEnd(), seconds)) / maximumEnd()) * track.clientWidth;
+  const margin = Math.min(48, scroll.clientWidth * .12); const left = scroll.scrollLeft; const right = left + scroll.clientWidth;
+  if (center || x < left + margin || x > right - margin) setTimelineScrollLeft(x - scroll.clientWidth / 2);
+}
+function ensureTimelineSegmentVisible(index) {
+  const segment = currentSegments()[index]; const scroll = $("#timelineScroll"); const track = $("#timelineTrack");
+  if (!segment || !scroll.clientWidth || !track.clientWidth) return;
+  const start = ((timeToSeconds(segment.start_time) ?? 0) / maximumEnd()) * track.clientWidth;
+  const end = ((timeToSeconds(segment.end_time) ?? 0) / maximumEnd()) * track.clientWidth;
+  const margin = Math.min(48, scroll.clientWidth * .12); const left = scroll.scrollLeft; const right = left + scroll.clientWidth;
+  if (start < left + margin || end > right - margin) {
+    setTimelineScrollLeft(end - start > scroll.clientWidth - margin * 2 ? start - margin : (start + end) / 2 - scroll.clientWidth / 2);
+  }
+}
+function renderTimelineZoom() {
+  const zoomIndex = TIMELINE_ZOOMS.indexOf(state.timelineZoom);
+  $("#timelineZoomValue").textContent = `${state.timelineZoom}x`;
+  $("#timelineZoomOut").disabled = zoomIndex <= 0;
+  $("#timelineZoomIn").disabled = zoomIndex >= TIMELINE_ZOOMS.length - 1;
+  $("#timeline").dataset.zoom = String(state.timelineZoom);
+}
+function setTimelineZoom(zoom) {
+  if (!TIMELINE_ZOOMS.includes(zoom) || zoom === state.timelineZoom) return;
+  state.timelineZoom = zoom; renderTimeline(); ensureTimelineTimeVisible(state.currentTime, true);
+}
 function seek(seconds) {
   state.currentTime = Math.min(maximumEnd(), Math.max(0, seconds));
   if (!state.demoInput && Number.isFinite($("#videoPlayer").duration)) $("#videoPlayer").currentTime = state.currentTime;
-  renderPlayback(); renderTimeline();
+  renderPlayback(true);
 }
-function selectSegment(index, seekVideo = true) { state.selected = index; if (seekVideo) seek(timeToSeconds(currentSegments()[index].start_time)); render(); }
+function selectSegment(index, seekVideo = true) {
+  if (!currentSegments()[index]) return;
+  state.selected = index; if (seekVideo) seek(timeToSeconds(currentSegments()[index].start_time)); render(); ensureTimelineSegmentVisible(index);
+}
 
-function renderPlayback() {
+function renderPlayback(followPlayhead = false) {
   $("#playbackTime").textContent = `${secondsToTime(state.currentTime)} / ${secondsToTime(maximumEnd())}`;
-  const index = activeIndex(); $("#activeSegmentLabel").textContent = index >= 0 ? `再生中: ${currentSegments()[index].job_title}` : "該当する作業区間なし";
-  $("#playhead").style.left = `${(state.currentTime / maximumEnd()) * 100}%`;
+  const index = activeIndex(); const segment = currentSegments()[index];
+  $("#activeSegmentLabel").textContent = segment ? `区間${String(index + 1).padStart(2, "0")} / ${segment.job_title}` : "該当する作業区間なし";
+  const playhead = $("#playhead"); const duration = maximumEnd();
+  playhead.style.left = `${(state.currentTime / duration) * 100}%`;
+  playhead.dataset.time = secondsToTime(state.currentTime);
+  playhead.classList.toggle("at-start", state.currentTime <= .5);
+  playhead.classList.toggle("at-end", state.currentTime >= duration - .5);
+  $("#timeline").setAttribute("aria-valuemax", String(duration));
+  $("#timeline").setAttribute("aria-valuenow", String(Math.round(state.currentTime)));
+  $("#timeline").setAttribute("aria-valuetext", `${secondsToTime(state.currentTime)} / ${secondsToTime(duration)}`);
+  document.querySelectorAll(".segment-block[data-segment-index]").forEach((block) => {
+    block.classList.toggle("current", Number(block.dataset.segmentIndex) === index);
+  });
+  document.querySelectorAll(".segment-row[data-segment-index]").forEach((row) => {
+    const isCurrent = Number(row.dataset.segmentIndex) === index;
+    row.classList.toggle("current", isCurrent);
+    const tag = row.querySelector(".current-tag");
+    if (tag) tag.hidden = !isCurrent;
+  });
+  if (followPlayhead) ensureTimelineTimeVisible(state.currentTime);
 }
 function renderTimeline() {
-  const segments = currentSegments(); const active = activeIndex(); const container = $("#timelineSegments"); container.replaceChildren();
+  const segments = currentSegments(); const duration = maximumEnd(); const container = $("#timelineSegments"); container.replaceChildren(); const trackWidth = sizeTimelineTrack();
+  renderRuler();
   segments.forEach((segment, index) => {
-    const start = timeToSeconds(segment.start_time); const end = timeToSeconds(segment.end_time);
-    const bar = document.createElement("button"); bar.type = "button"; bar.className = `segment-bar${index === state.selected ? " selected" : ""}${index === active ? " playing" : ""}`;
-    bar.style.left = `${(start / maximumEnd()) * 100}%`; bar.style.width = `${((end - start) / maximumEnd()) * 100}%`; bar.style.setProperty("--segment-color", COLORS[index % COLORS.length]);
-    bar.innerHTML = `<span class="segment-label">${escapeHtml(segment.job_title)}</span>`; bar.addEventListener("click", (event) => { event.stopPropagation(); selectSegment(index); });
-    if (state.view === "reviewed") {
-      for (const side of ["left", "right"]) { const handle = document.createElement("span"); handle.className = `drag-handle ${side}`; handle.setAttribute("role", "slider"); handle.addEventListener("pointerdown", (event) => beginHandleDrag(event, index, side)); bar.append(handle); }
+    const start = timeToSeconds(segment.start_time) ?? 0; const end = timeToSeconds(segment.end_time) ?? start; const width = ((end - start) / duration) * 100; const pixelWidth = (width / 100) * trackWidth;
+    const isShort = pixelWidth < MIN_SEGMENT_LABEL_WIDTH; const canDrag = pixelWidth >= MIN_SEGMENT_HANDLE_WIDTH; const hasWarning = Boolean(state.warnings[index]?.length);
+    const block = document.createElement("div");
+    block.className = `segment-block${index === state.selected ? " selected" : ""}${isShort ? " short" : ""}${hasWarning ? " has-warning" : ""}${start <= 0 ? " edge-start" : ""}${end >= duration ? " edge-end" : ""}${end / duration > .97 ? " callout-left" : ""}`;
+    block.dataset.segmentIndex = index; block.dataset.shortLabel = String(index + 1).padStart(2, "0");
+    block.dataset.pixelWidth = pixelWidth.toFixed(2);
+    block.style.left = `${(start / duration) * 100}%`; block.style.width = `${width}%`; block.style.setProperty("--segment-color", COLORS[index % COLORS.length]);
+    const bar = document.createElement("button"); bar.type = "button"; bar.className = "segment-bar";
+    bar.setAttribute("aria-pressed", String(index === state.selected));
+    bar.setAttribute("aria-label", `区間${String(index + 1).padStart(2, "0")}、${hasWarning ? "要確認、" : ""}${segment.job_title}、${segment.start_time}から${segment.end_time}、${end - start}秒。選択すると区間先頭へ移動します。`);
+    bar.title = `区間${String(index + 1).padStart(2, "0")}｜${segment.job_title}\n${segment.start_time}–${segment.end_time}（${end - start}秒）`;
+    bar.innerHTML = `<span class="segment-label">${String(index + 1).padStart(2, "0")}</span>`;
+    bar.addEventListener("click", (event) => { event.stopPropagation(); selectSegment(index); });
+    block.append(bar);
+    if (state.view === "reviewed" && index === state.selected && canDrag) {
+      for (const side of ["left", "right"]) {
+        const value = side === "left" ? start : end; const handle = document.createElement("span");
+        handle.className = `drag-handle ${side}`; handle.tabIndex = 0; handle.setAttribute("role", "slider");
+        handle.setAttribute("aria-label", `区間${String(index + 1).padStart(2, "0")}の${side === "left" ? "開始" : "終了"}時刻`);
+        handle.setAttribute("aria-valuemin", "0"); handle.setAttribute("aria-valuemax", String(duration)); handle.setAttribute("aria-valuenow", String(value)); handle.setAttribute("aria-valuetext", secondsToTime(value));
+        handle.addEventListener("pointerdown", (event) => beginHandleDrag(event, index, side));
+        handle.addEventListener("click", (event) => event.stopPropagation());
+        handle.addEventListener("keydown", (event) => nudgeHandle(event, index, side));
+        block.append(handle);
+      }
     }
-    container.append(bar);
+    container.append(block);
   });
-  renderPlayback();
+  renderTimelineZoom(); renderPlayback();
+}
+function boundaryLimits(index, side) {
+  const segments = state.reviewed; const segment = segments[index];
+  const start = timeToSeconds(segment.start_time) ?? 0; const end = timeToSeconds(segment.end_time) ?? start + 1;
+  if (side === "left") return { min: index > 0 ? timeToSeconds(segments[index - 1].end_time) ?? 0 : 0, max: end - 1 };
+  return { min: start + 1, max: index < segments.length - 1 ? timeToSeconds(segments[index + 1].start_time) ?? maximumEnd() : maximumEnd() };
+}
+function applyBoundary(index, side, seconds) {
+  const limits = boundaryLimits(index, side); const value = Math.max(limits.min, Math.min(limits.max, Math.round(seconds)));
+  const key = side === "left" ? "start_time" : "end_time"; state.reviewed[index][key] = secondsToTime(value);
+  state.reviewed[index].duration_seconds = timeToSeconds(state.reviewed[index].end_time) - timeToSeconds(state.reviewed[index].start_time);
+  return value;
+}
+function nudgeHandle(event, index, side) {
+  if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+  event.preventDefault(); event.stopPropagation(); const before = clone(state.reviewed); const key = side === "left" ? "start_time" : "end_time";
+  const direction = event.key === "ArrowLeft" ? -1 : 1; const step = event.shiftKey ? 5 : 1;
+  const previous = timeToSeconds(state.reviewed[index][key]); const next = applyBoundary(index, side, previous + direction * step);
+  if (next === previous) { toast("隣の区間または動画端を越えて移動できません。"); return; }
+  pushHistory(before); state.dirty = true; state.warnings = validateSegments(state.reviewed); render();
+  requestAnimationFrame(() => document.querySelector(`.segment-block[data-segment-index="${index}"] .drag-handle.${side}`)?.focus());
 }
 function beginHandleDrag(event, index, side) {
-  event.stopPropagation(); event.preventDefault(); const timeline = $("#timeline"); const original = clone(state.reviewed);
+  event.stopPropagation(); event.preventDefault(); const original = clone(state.reviewed); let wasClamped = false;
   const move = (pointerEvent) => {
-    const rect = timeline.getBoundingClientRect(); const seconds = Math.round(Math.max(0, Math.min(1, (pointerEvent.clientX - rect.left) / rect.width)) * maximumEnd());
-    state.reviewed[index][side === "left" ? "start_time" : "end_time"] = secondsToTime(seconds); renderTimeline();
+    const seconds = Math.round(timelineSecondsAtClientX(pointerEvent.clientX));
+    const key = side === "left" ? "start_time" : "end_time"; const previous = timeToSeconds(state.reviewed[index][key]); const next = applyBoundary(index, side, seconds); const isClamped = next !== seconds;
+    if (isClamped && !wasClamped) toast("隣の区間または動画端を越えて移動できません。");
+    wasClamped = isClamped;
+    if (next !== previous) renderTimeline();
   };
   const up = () => {
-    window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up);
+    window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); window.removeEventListener("pointercancel", up);
     const errors = validateSegments(state.reviewed);
     if (errors.some((items) => items.length)) { state.reviewed = original; toast(errors.flat()[0]); }
-    else { state.undo = original; state.redo = null; state.dirty = true; state.reviewed[index].duration_seconds = timeToSeconds(state.reviewed[index].end_time) - timeToSeconds(state.reviewed[index].start_time); }
+    else if (JSON.stringify(original) !== JSON.stringify(state.reviewed)) { pushHistory(original); state.dirty = true; }
     state.warnings = validateSegments(state.reviewed); render();
   };
-  window.addEventListener("pointermove", move); window.addEventListener("pointerup", up, { once: true });
+  window.addEventListener("pointermove", move); window.addEventListener("pointerup", up, { once: true }); window.addEventListener("pointercancel", up, { once: true });
 }
 function escapeHtml(value) { return String(value).replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character]); }
 
 function renderList() {
-  const list = $("#segmentList"); list.replaceChildren();
+  const list = $("#segmentList"); const active = activeIndex(); list.replaceChildren();
   currentSegments().forEach((segment, index) => {
     const row = document.createElement("button"); row.type = "button"; row.className = `segment-row${index === state.selected ? " selected" : ""}${state.warnings[index]?.length ? " warning" : ""}`;
-    row.style.setProperty("--segment-color", COLORS[index % COLORS.length]);
-    row.innerHTML = `<span class="color"></span><span><strong>${escapeHtml(segment.job_title)}</strong><small>${escapeHtml(segment.start_time)}–${escapeHtml(segment.end_time)} ・ Job ${escapeHtml(segment.job_no)}</small></span>${state.warnings[index]?.length ? '<span class="warning-mark">!</span>' : ""}`;
+    row.dataset.segmentIndex = index; row.setAttribute("aria-pressed", String(index === state.selected));
+    const duration = (timeToSeconds(segment.end_time) ?? 0) - (timeToSeconds(segment.start_time) ?? 0);
+    const stateTags = [
+      index === state.selected ? '<span class="selection-tag">選択中</span>' : "",
+      `<span class="current-tag"${index === active ? "" : " hidden"}>現在位置</span>`,
+      state.warnings[index]?.length ? '<span class="warning-mark">要確認</span>' : "",
+    ].join("");
+    row.innerHTML = `<span class="segment-number">${String(index + 1).padStart(2, "0")}</span><span class="row-copy"><strong>${escapeHtml(segment.job_title)}</strong><small>${escapeHtml(segment.start_time)}–${escapeHtml(segment.end_time)} ・ ${duration}秒 ・ Job ${escapeHtml(segment.job_no)}</small></span><span class="row-state">${stateTags}</span>`;
     row.addEventListener("click", () => selectSegment(index)); list.append(row);
   });
+  const selectedRow = list.querySelector(".segment-row.selected");
+  if (selectedRow) selectedRow.scrollIntoView({ block: "nearest", inline: "nearest" });
 }
 function renderDetail() {
   const panel = $("#detailPanel"); const segment = currentSegments()[state.selected];
   if (!segment) { panel.innerHTML = '<p class="empty-state">区間を選択してください。</p>'; return; }
   const readOnly = state.view !== "reviewed";
-  panel.innerHTML = `<form id="detailForm"><div class="form-grid">
+  panel.innerHTML = `<form id="detailForm"><div class="detail-heading"><div><small>${readOnly ? "AI予測（読み取り専用）" : "選択中の区間（編集できます）"}</small><strong>区間${String(state.selected + 1).padStart(2, "0")}｜${escapeHtml(segment.job_title)}</strong></div><span>${timeToSeconds(segment.end_time) - timeToSeconds(segment.start_time)}秒</span></div><div class="form-grid">
     <label>開始時刻<input name="start_time" value="${escapeHtml(segment.start_time)}" pattern="\\d{2}:\\d{2}:\\d{2}" ${readOnly ? "disabled" : ""}></label>
     <label>終了時刻<input name="end_time" value="${escapeHtml(segment.end_time)}" pattern="\\d{2}:\\d{2}:\\d{2}" ${readOnly ? "disabled" : ""}></label>
     <label>Job No.<input name="job_no" value="${escapeHtml(segment.job_no)}" ${readOnly ? "disabled" : ""}></label>
@@ -289,7 +474,7 @@ function renderDetail() {
     <div class="readonly-field">手の動き<span>${escapeHtml(segment.hand_movement)}</span></div>
     <div class="readonly-field">治工具・部品<span>${escapeHtml(segment.tools_and_parts)}</span></div>
   </div>${state.warnings[state.selected]?.length ? `<ul class="warning-list">${state.warnings[state.selected].map((warning) => `<li>${escapeHtml(warning)}</li>`).join("")}</ul>` : ""}
-  ${readOnly ? "" : '<div class="detail-actions"><button id="deleteButton" class="button secondary" type="button">区間を削除</button><button class="button primary" type="submit">変更を確定</button></div>'}</form>`;
+  ${readOnly ? "" : '<div class="detail-actions"><button id="deleteButton" class="button secondary" type="button">区間を削除</button><button class="button primary" type="submit">この区間に反映</button></div>'}</form>`;
   if (!readOnly) { $("#detailForm").addEventListener("submit", saveDetail); $("#deleteButton").addEventListener("click", deleteSegment); }
 }
 function saveDetail(event) {
@@ -298,11 +483,18 @@ function saveDetail(event) {
   segment.duration_seconds = (timeToSeconds(segment.end_time) ?? 0) - (timeToSeconds(segment.start_time) ?? 0);
   const errors = validateSegments(state.reviewed);
   if (errors.some((items) => items.length)) { state.reviewed = before; toast(errors.flat()[0]); render(); return; }
-  state.undo = before; state.redo = null; state.dirty = true; state.warnings = errors; state.reviewed.sort((a, b) => timeToSeconds(a.start_time) - timeToSeconds(b.start_time)); state.selected = state.reviewed.indexOf(segment); render(); toast("変更を確定しました。");
+  pushHistory(before); state.dirty = true; state.warnings = errors; state.reviewed.sort((a, b) => timeToSeconds(a.start_time) - timeToSeconds(b.start_time)); state.selected = state.reviewed.indexOf(segment); render(); toast("変更を確定しました。");
 }
-function deleteSegment() {
-  const segment = state.reviewed[state.selected]; if (!confirm(`${segment.job_no} ${segment.job_title}（${segment.start_time}–${segment.end_time}）を削除しますか？`)) return;
-  state.undo = clone(state.reviewed); state.redo = null; state.reviewed.splice(state.selected, 1); state.selected = Math.min(state.selected, state.reviewed.length - 1); state.dirty = true; state.warnings = validateSegments(state.reviewed); render();
+async function deleteSegment() {
+  const segment = state.reviewed[state.selected]; if (!segment) return;
+  const confirmed = await confirmAction({
+    title: `区間${String(state.selected + 1).padStart(2, "0")}を削除しますか`,
+    message: `${segment.job_title}（${segment.start_time}–${segment.end_time}）を一覧とタイムラインから削除します。Undoで元に戻せます。`,
+    acceptLabel: "削除する",
+    danger: true,
+  });
+  if (!confirmed) return;
+  pushHistory(state.reviewed); state.reviewed.splice(state.selected, 1); state.selected = Math.min(state.selected, state.reviewed.length - 1); state.dirty = true; state.warnings = validateSegments(state.reviewed); render();
 }
 function openAddDialog() {
   const start = Math.min(Math.floor(state.currentTime), maximumEnd() - 1); const form = $("#addForm");
@@ -314,10 +506,10 @@ function addSegment(event) {
   segment.duration_seconds = (timeToSeconds(segment.end_time) ?? 0) - (timeToSeconds(segment.start_time) ?? 0);
   const next = [...clone(state.reviewed), segment].sort((a, b) => (timeToSeconds(a.start_time) ?? 0) - (timeToSeconds(b.start_time) ?? 0)); const errors = validateSegments(next);
   if (errors.some((items) => items.length)) { $("#addError").textContent = errors.flat()[0]; return; }
-  state.undo = clone(state.reviewed); state.redo = null; state.reviewed = next; state.selected = state.reviewed.indexOf(segment); if (state.selected < 0) state.selected = next.findIndex((item) => item.start_time === segment.start_time && item.end_time === segment.end_time); state.dirty = true; state.warnings = errors; $("#addDialog").close(); render();
+  pushHistory(state.reviewed); state.reviewed = next; state.selected = state.reviewed.indexOf(segment); if (state.selected < 0) state.selected = next.findIndex((item) => item.start_time === segment.start_time && item.end_time === segment.end_time); state.dirty = true; state.warnings = errors; $("#addDialog").close(); render();
 }
-function undo() { if (!state.undo) return; state.redo = clone(state.reviewed); state.reviewed = state.undo; state.undo = null; state.selected = Math.min(state.selected, state.reviewed.length - 1); state.dirty = true; state.warnings = validateSegments(state.reviewed); render(); }
-function redo() { if (!state.redo) return; state.undo = clone(state.reviewed); state.reviewed = state.redo; state.redo = null; state.selected = Math.min(state.selected, state.reviewed.length - 1); state.dirty = true; state.warnings = validateSegments(state.reviewed); render(); }
+function undo() { if (!state.undoStack.length) return; state.redoStack.push(clone(state.reviewed)); state.reviewed = state.undoStack.pop(); state.selected = Math.min(state.selected, state.reviewed.length - 1); state.dirty = true; state.warnings = validateSegments(state.reviewed); render(); }
+function redo() { if (!state.redoStack.length) return; state.undoStack.push(clone(state.reviewed)); state.reviewed = state.redoStack.pop(); state.selected = Math.min(state.selected, state.reviewed.length - 1); state.dirty = true; state.warnings = validateSegments(state.reviewed); render(); }
 
 function download(type) {
   const isReviewed = type === "reviewed"; const source = isReviewed ? state.reviewed : state.prediction;
@@ -328,9 +520,26 @@ function download(type) {
 }
 function renderDirty() { const badge = $("#dirtyBadge"); badge.className = `dirty-badge ${state.dirty ? "dirty" : "clean"}`; badge.textContent = state.dirty ? "未出力の変更あり" : "変更なし"; }
 function render() {
-  $("#reviewedTab").classList.toggle("active", state.view === "reviewed"); $("#predictionTab").classList.toggle("active", state.view === "prediction");
-  $("#addButton").disabled = state.view !== "reviewed"; $("#undoButton").disabled = !state.undo || state.view !== "reviewed"; $("#redoButton").disabled = !state.redo || state.view !== "reviewed";
+  const reviewedActive = state.view === "reviewed";
+  $("#reviewedTab").classList.toggle("active", reviewedActive); $("#predictionTab").classList.toggle("active", !reviewedActive);
+  $("#reviewedTab").setAttribute("aria-selected", String(reviewedActive)); $("#predictionTab").setAttribute("aria-selected", String(!reviewedActive));
+  $("#reviewedTab").tabIndex = reviewedActive ? 0 : -1; $("#predictionTab").tabIndex = reviewedActive ? -1 : 0;
+  $("#addButton").disabled = state.view !== "reviewed";
+  const undoCount = state.undoStack.length, redoCount = state.redoStack.length;
+  $("#undoButton").disabled = !undoCount || state.view !== "reviewed"; $("#redoButton").disabled = !redoCount || state.view !== "reviewed";
+  $("#undoButton").textContent = undoCount ? `↶ Undo (${undoCount})` : "↶ Undo"; $("#redoButton").textContent = redoCount ? `↷ Redo (${redoCount})` : "↷ Redo";
   renderTimeline(); renderList(); renderDetail(); renderDirty();
+}
+function switchView(view, focusTab = false) {
+  state.view = view; state.selected = Math.min(state.selected, currentSegments().length - 1);
+  state.warnings = view === "reviewed" ? validateSegments(state.reviewed) : clone(state.predictionWarnings);
+  render();
+  if (focusTab) $(view === "reviewed" ? "#reviewedTab" : "#predictionTab").focus();
+}
+function handleTabKey(event) {
+  if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+  event.preventDefault();
+  switchView(event.key === "ArrowLeft" || event.key === "Home" ? "reviewed" : "prediction", true);
 }
 
 function bindDrop(zoneSelector, inputSelector, handler) {
@@ -350,11 +559,26 @@ async function initialize() {
 
 bindDrop("#videoDrop", "#videoInput", selectVideo); bindDrop("#pdfDrop", "#pdfInput", selectPdf);
 $("#demoInputButton").addEventListener("click", useDemoInput); $("#startButton").addEventListener("click", startAnalysis); $("#cancelButton").addEventListener("click", cancelAnalysis);
-$("#timeline").addEventListener("click", (event) => { const rect = event.currentTarget.getBoundingClientRect(); seek(((event.clientX - rect.left) / rect.width) * maximumEnd()); });
-$("#videoPlayer").addEventListener("timeupdate", (event) => { state.currentTime = event.currentTarget.currentTime; renderPlayback(); renderTimeline(); });
-$("#reviewedTab").addEventListener("click", () => { state.view = "reviewed"; state.selected = Math.min(state.selected, state.reviewed.length - 1); state.warnings = validateSegments(state.reviewed); render(); });
-$("#predictionTab").addEventListener("click", () => { state.view = "prediction"; state.selected = Math.min(state.selected, state.prediction.length - 1); state.warnings = clone(state.predictionWarnings); render(); });
+$("#timelineTrack").addEventListener("click", (event) => seek(timelineSecondsAtClientX(event.clientX)));
+$("#timeline").addEventListener("keydown", (event) => {
+  if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+  event.preventDefault(); const step = event.shiftKey ? 5 : 1;
+  if (event.key === "Home") seek(0);
+  else if (event.key === "End") seek(maximumEnd());
+  else seek(state.currentTime + (event.key === "ArrowLeft" ? -step : step));
+});
+$("#timelineZoomOut").addEventListener("click", () => setTimelineZoom(TIMELINE_ZOOMS[TIMELINE_ZOOMS.indexOf(state.timelineZoom) - 1]));
+$("#timelineZoomIn").addEventListener("click", () => setTimelineZoom(TIMELINE_ZOOMS[TIMELINE_ZOOMS.indexOf(state.timelineZoom) + 1]));
+$("#videoPlayer").addEventListener("timeupdate", (event) => { state.currentTime = event.currentTarget.currentTime; renderPlayback(true); });
+$("#reviewedTab").addEventListener("click", () => switchView("reviewed"));
+$("#predictionTab").addEventListener("click", () => switchView("prediction"));
+$("#reviewedTab").addEventListener("keydown", handleTabKey); $("#predictionTab").addEventListener("keydown", handleTabKey);
 $("#addButton").addEventListener("click", openAddDialog); $("#confirmAdd").addEventListener("click", addSegment); $("#undoButton").addEventListener("click", undo); $("#redoButton").addEventListener("click", redo);
 $("#downloadPrediction").addEventListener("click", () => download("prediction")); $("#downloadReviewed").addEventListener("click", () => download("reviewed"));
+let timelineResizeFrame = 0;
+window.addEventListener("resize", () => {
+  cancelAnimationFrame(timelineResizeFrame);
+  timelineResizeFrame = requestAnimationFrame(() => { if (!$("#workspace").hidden && currentSegments().length) { renderTimeline(); ensureTimelineTimeVisible(state.currentTime); } });
+});
 window.addEventListener("beforeunload", (event) => { if (state.dirty) { event.preventDefault(); event.returnValue = ""; } });
 initialize();
