@@ -1,3 +1,5 @@
+import * as Segments from "./segments.js";
+
 const SEGMENT_KEYS = ["start_time", "end_time", "duration_seconds", "job_no", "page_number", "job_title", "work_content", "hand_movement", "tools_and_parts"];
 // 区間色は分類を意味しないため統一し、番号で区別する。
 // 選択、現在位置、警告はそれぞれ別の視覚表現を使う。
@@ -37,16 +39,7 @@ const state = {
   timestamp: "",
 };
 
-function timeToSeconds(value) {
-  if (!/^\d{2}:\d{2}:\d{2}$/.test(value)) return null;
-  const [h, m, s] = value.split(":").map(Number);
-  if (m > 59 || s > 59) return null;
-  return h * 3600 + m * 60 + s;
-}
-function secondsToTime(value) {
-  const seconds = Math.max(0, Math.floor(Number(value) || 0));
-  return [Math.floor(seconds / 3600), Math.floor((seconds % 3600) / 60), seconds % 60].map((part) => String(part).padStart(2, "0")).join(":");
-}
+const { timeToSeconds, secondsToTime, editWorsened } = Segments;
 function clone(value) { return JSON.parse(JSON.stringify(value)); }
 const UNDO_DEPTH = 20;
 function pushHistory(before) {
@@ -59,31 +52,7 @@ function cleanSegments(segments, reviewed = false) {
 }
 function maximumEnd() { return Math.max(1, Math.ceil(state.videoDuration || 30)); }
 
-function validateSegments(segments) {
-  const errors = segments.map(() => []);
-  const times = segments.map((segment, index) => {
-    const start = timeToSeconds(segment.start_time);
-    const end = timeToSeconds(segment.end_time);
-    if (start === null || end === null) errors[index].push("時刻は厳密なHH:MM:SS形式で入力してください。");
-    return { start, end };
-  });
-  segments.forEach((segment, index) => {
-    const { start, end } = times[index];
-    if (start === null || end === null) return;
-    if (start >= end || end - start < 1) errors[index].push("開始より後の終了時刻を指定し、1秒以上にしてください。");
-    if (start < 0 || end > maximumEnd()) errors[index].push(`動画範囲（00:00:00〜${secondsToTime(maximumEnd())}）内にしてください。`);
-  });
-  const order = segments.map((_, index) => index).sort((a, b) => (times[a].start ?? 0) - (times[b].start ?? 0));
-  for (let index = 1; index < order.length; index += 1) {
-    const previous = order[index - 1];
-    const current = order[index];
-    if (times[current].start < times[previous].end) {
-      errors[previous].push(`区間${current + 1}と重複しています。`);
-      errors[current].push(`区間${previous + 1}と重複しています。`);
-    }
-  }
-  return errors;
-}
+function validateSegments(segments) { return Segments.validateSegments(segments, maximumEnd()); }
 
 function formatBytes(bytes) {
   if (!Number.isFinite(bytes)) return "-";
@@ -400,24 +369,13 @@ function renderTimeline() {
   });
   renderTimelineZoom(); renderPlayback();
 }
-function boundaryLimits(index, side) {
-  const segments = state.reviewed; const segment = segments[index];
-  const start = timeToSeconds(segment.start_time) ?? 0; const end = timeToSeconds(segment.end_time) ?? start + 1;
-  if (side === "left") return { min: index > 0 ? timeToSeconds(segments[index - 1].end_time) ?? 0 : 0, max: end - 1 };
-  return { min: start + 1, max: index < segments.length - 1 ? timeToSeconds(segments[index + 1].start_time) ?? maximumEnd() : maximumEnd() };
-}
-function applyBoundary(index, side, seconds) {
-  const limits = boundaryLimits(index, side); const value = Math.max(limits.min, Math.min(limits.max, Math.round(seconds)));
-  const key = side === "left" ? "start_time" : "end_time"; state.reviewed[index][key] = secondsToTime(value);
-  state.reviewed[index].duration_seconds = timeToSeconds(state.reviewed[index].end_time) - timeToSeconds(state.reviewed[index].start_time);
-  return value;
-}
+function applyBoundary(index, side, seconds) { return Segments.applyBoundary(state.reviewed, index, side, seconds, maximumEnd()); }
 function nudgeHandle(event, index, side) {
   if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
-  event.preventDefault(); event.stopPropagation(); const before = clone(state.reviewed); const key = side === "left" ? "start_time" : "end_time";
+  event.preventDefault(); event.stopPropagation(); const before = clone(state.reviewed);
   const direction = event.key === "ArrowLeft" ? -1 : 1; const step = event.shiftKey ? 5 : 1;
-  const previous = timeToSeconds(state.reviewed[index][key]); const next = applyBoundary(index, side, previous + direction * step);
-  if (next === previous) { toast("隣の区間または動画端を越えて移動できません。"); return; }
+  const { accepted } = Segments.nudgeResult(state.reviewed, index, side, direction, step, maximumEnd());
+  if (!accepted) { toast("隣の区間または動画端を越えて移動できません。"); return; }
   pushHistory(before); state.dirty = true; state.warnings = validateSegments(state.reviewed); render();
   requestAnimationFrame(() => document.querySelector(`.segment-block[data-segment-index="${index}"] .drag-handle.${side}`)?.focus());
 }
@@ -433,7 +391,7 @@ function beginHandleDrag(event, index, side) {
   const up = () => {
     window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); window.removeEventListener("pointercancel", up);
     const errors = validateSegments(state.reviewed);
-    if (errors.some((items) => items.length)) { state.reviewed = original; toast(errors.flat()[0]); }
+    if (editWorsened(validateSegments(original), errors, index)) { state.reviewed = original; toast(errors[index][0]); }
     else if (JSON.stringify(original) !== JSON.stringify(state.reviewed)) { pushHistory(original); state.dirty = true; }
     state.warnings = validateSegments(state.reviewed); render();
   };
@@ -482,7 +440,7 @@ function saveDetail(event) {
   ["start_time", "end_time", "job_no", "page_number", "job_title"].forEach((key) => { segment[key] = String(form.get(key) || "-"); });
   segment.duration_seconds = (timeToSeconds(segment.end_time) ?? 0) - (timeToSeconds(segment.start_time) ?? 0);
   const errors = validateSegments(state.reviewed);
-  if (errors.some((items) => items.length)) { state.reviewed = before; toast(errors.flat()[0]); render(); return; }
+  if (editWorsened(validateSegments(before), errors, state.selected)) { state.reviewed = before; toast(errors[state.selected][0]); render(); return; }
   pushHistory(before); state.dirty = true; state.warnings = errors; state.reviewed.sort((a, b) => timeToSeconds(a.start_time) - timeToSeconds(b.start_time)); state.selected = state.reviewed.indexOf(segment); render(); toast("変更を確定しました。");
 }
 async function deleteSegment() {
@@ -505,7 +463,8 @@ function addSegment(event) {
   const segment = { start_time: String(form.get("start_time")), end_time: String(form.get("end_time")), duration_seconds: 0, job_no: String(form.get("job_no") || "-"), page_number: String(form.get("page_number") || "-"), job_title: String(form.get("job_title") || "-"), work_content: "-", hand_movement: "-", tools_and_parts: "-" };
   segment.duration_seconds = (timeToSeconds(segment.end_time) ?? 0) - (timeToSeconds(segment.start_time) ?? 0);
   const next = [...clone(state.reviewed), segment].sort((a, b) => (timeToSeconds(a.start_time) ?? 0) - (timeToSeconds(b.start_time) ?? 0)); const errors = validateSegments(next);
-  if (errors.some((items) => items.length)) { $("#addError").textContent = errors.flat()[0]; return; }
+  const addedIndex = next.indexOf(segment);
+  if (errors[addedIndex]?.length) { $("#addError").textContent = errors[addedIndex][0]; return; }
   pushHistory(state.reviewed); state.reviewed = next; state.selected = state.reviewed.indexOf(segment); if (state.selected < 0) state.selected = next.findIndex((item) => item.start_time === segment.start_time && item.end_time === segment.end_time); state.dirty = true; state.warnings = errors; $("#addDialog").close(); render();
 }
 function undo() { if (!state.undoStack.length) return; state.redoStack.push(clone(state.reviewed)); state.reviewed = state.undoStack.pop(); state.selected = Math.min(state.selected, state.reviewed.length - 1); state.dirty = true; state.warnings = validateSegments(state.reviewed); render(); }
