@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>本番接続の確認ガイド | Few-shot TAS</title>
+  <style>
+    :root { --navy:#143c5c; --blue:#0878b9; --ink:#172330; --muted:#5d6b78; --line:#d8e1e8; --bg:#f3f7fa; --card:#fff; --info:#e9f5fb; --warn:#fff4dc; --ok:#e9f7ef; }
+    * { box-sizing:border-box; } html { scroll-behavior:smooth; }
+    body { margin:0; color:var(--ink); background:var(--bg); font:16px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans JP",sans-serif; }
+    header { padding:54px 24px 44px; color:#fff; background:linear-gradient(120deg,#10304d,#1777a7); }
+    main, header > div, footer { max-width:960px; margin:auto; }
+    h1 { margin:0; font-size:clamp(29px,5vw,45px); line-height:1.25; } h2 { margin:0 0 12px; color:var(--navy); font-size:24px; line-height:1.35; } h3 { margin:0 0 7px; color:var(--navy); font-size:18px; }
+    p { margin:0 0 13px; } .eyebrow { margin-bottom:9px; font-size:13px; font-weight:700; letter-spacing:.08em; opacity:.85; } .lead { max-width:760px; margin-top:16px; font-size:18px; }
+    main { padding:32px 20px 55px; } .card,.step { margin-bottom:20px; padding:24px; border:1px solid var(--line); border-radius:14px; background:var(--card); box-shadow:0 10px 28px rgba(32,63,87,.07); }
+    .notice { display:grid; grid-template-columns:30px 1fr; gap:12px; margin:17px 0; padding:15px; border-radius:10px; } .notice strong { display:block; }
+    .warn { background:var(--warn); color:#714000; } .info { background:var(--info); color:#174f76; } .ok { background:var(--ok); color:#175c3a; } .icon { font-size:22px; text-align:center; }
+    .flow { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-top:16px; } .flow div { padding:13px; border:1px solid var(--line); border-radius:9px; background:#f8fbfc; } .flow strong { display:block; color:var(--navy); } .flow span { color:var(--muted); font-size:14px; }
+    .step { display:grid; grid-template-columns:47px 1fr; gap:17px; padding:22px; } .num { display:grid; place-items:center; width:40px; height:40px; border-radius:50%; color:#fff; background:var(--blue); font-weight:800; }
+    .check { padding:14px 17px; border:1px solid var(--line); border-radius:9px; background:#fbfdfe; } .check ul { margin:0; padding-left:1.35em; }
+    ul,ol { margin:8px 0 14px; padding-left:1.4em; } li+li { margin-top:5px; }
+    code { padding:1px 5px; border-radius:4px; background:#eaf0f4; font: .9em Consolas,"Cascadia Code",monospace; } pre { overflow:auto; margin:12px 0 15px; padding:15px; border-radius:9px; color:#eaf7ff; background:#132638; font:13px/1.65 Consolas,"Cascadia Code",monospace; }
+    table { width:100%; border-collapse:collapse; margin:12px 0; } th,td { padding:10px 11px; border:1px solid var(--line); text-align:left; vertical-align:top; } th { color:var(--navy); background:#edf4f8; } .small { color:var(--muted); font-size:14px; } .bad { color:#a52b2b; font-weight:700; } .good { color:#187047; font-weight:700; }
+    a { color:#11699d; } footer { padding:0 20px 35px; color:var(--muted); font-size:13px; }
+    @media(max-width:650px) { header { padding:40px 20px; } main { padding:22px 12px 44px; } .card,.step { padding:18px; } .step { grid-template-columns:38px 1fr; gap:10px; } .num { width:33px; height:33px; } .flow { grid-template-columns:1fr; } table { display:block; overflow:auto; white-space:nowrap; } }
+  </style>
+</head>
+<body>
+  <header><div>
+    <p class="eyebrow">Few-shot TAS / 接続確認</p>
+    <h1>本番接続の確認ガイド</h1>
+    <p class="lead">Gitからアプリを取得し、Google Cloud上のGeminiに接続できるかを、合成動画だけで安全に確認するための手順です。</p>
+  </div></header>
+  <main>
+    <section class="card">
+      <h2>最初に知っておくこと</h2>
+      <p>このガイドでいう「本番環境での疎通確認」は、<code>MOCK_MODE=false</code> で起動し、貴社のGoogle Cloudに実際に接続できるかを確かめる作業です。公開サイトへのデプロイや、実作業動画での評価は含みません。</p>
+      <div class="notice warn"><div class="icon">!</div><div><strong>実接続はまだ測定済みではありません。</strong>この手順で分かるのは「接続できたか」です。精度、処理時間、料金、運用上の権限が十分かは、別の検証が必要です。</div></div>
+      <div class="flow"><div><strong>1. 取得・起動</strong><span>まずローカルで画面を開く</span></div><div><strong>2. 接続設定</strong><span>Google Cloudの情報を入れる</span></div><div><strong>3. 合成動画で確認</strong><span>結果と履歴を確認する</span></div></div>
+    </section>
+
+    <section class="card">
+      <h2>「お手本あり／なし」ボタンの意味</h2>
+      <table><thead><tr><th>画面のボタン</th><th>分析モード</th><th>分析時に使うもの</th></tr></thead><tbody>
+        <tr><td>お手本と照合</td><td>Few-Shot</td><td>公開済み標準セットの記述。案3では標準代表画像も使います。</td></tr>
+        <tr><td>お手本なしで分析</td><td>Zero-Shot</td><td>標準セットの記述・画像を推論へ送らず、実作業動画と確認済み語彙を使います。</td></tr>
+      </tbody></table>
+      <p class="small">「分析方式（案1〜3）」は別の選択欄です。お手本の有無と分析方式は、別々に組み合わせて選べます。</p>
+    </section>
+
+    <section class="card">
+      <h2>始める前の準備</h2>
+      <div class="check"><ul>
+        <li>このリポジトリを読む権限とGitのURL</li>
+        <li>Node.js 20.11以上、FFmpeg と ffprobe</li>
+        <li>Google Cloudへログインするための <code>gcloud</code></li>
+        <li>Google Cloud担当者から受け取るプロジェクトID、リージョン、一時保存バケット、モデルID</li>
+        <li>API呼び出しと、一時バケットの作成・読み取り・削除を行える権限</li>
+        <li>接続確認用の合成動画。実作業動画は今回使いません。</li>
+      </ul></div>
+      <div class="notice info"><div class="icon">i</div><div><strong>Google Cloud担当者への依頼文</strong>「Few-shot TASの接続確認をします。ログインする利用者に、対象プロジェクトでGemini Enterprise Agent Platformを呼び出し、一時GCSオブジェクトを作成・取得・削除できる権限を付与してください。Agent Platformサービスエージェントにも一時バケットの読み取り権限が必要です。」</div></div>
+    </section>
+
+    <section class="card">
+      <h2>手順</h2>
+      <article class="step"><div class="num">1</div><div><h3>アプリを取得する</h3><p>PowerShellを開き、作業用フォルダーで次を実行します。GitのURLは担当者から受け取ったものに置き換えてください。</p><pre>cd C:\work
+git clone &lt;担当者から受け取ったGitのURL&gt;
+cd gemini-tas-demo</pre><p class="small">すでにこのフォルダーがある場合は、cloneせずそのフォルダーを開いてください。</p></div></article>
+
+      <article class="step"><div class="num">2</div><div><h3>まずモック画面を開く</h3><p>外部通信をしない画面確認です。ここで画面が開けば、PC上でアプリを動かす準備ができています。</p><pre>$env:MOCK_MODE = "true"
+npm.cmd start</pre><p>ブラウザで <code>http://127.0.0.1:4173/</code> を開き、右上に「LOCAL MOCK」と表示されることを確認します。</p><div class="notice warn"><div class="icon">!</div><div><strong>これは本番接続の確認ではありません。</strong>「LOCAL MOCK」はGeminiやGoogle Cloudへ接続しない試運転です。</div></div></div></article>
+
+      <article class="step"><div class="num">3</div><div><h3>モックを停止し、Google Cloudへログインする</h3><p>モックを起動していたPowerShellで <code>Ctrl + C</code> を押して停止します。続けて次を実行します。</p><pre>gcloud auth login
+gcloud auth list</pre><p>ブラウザが開いたら、会社から指定されたGoogleアカウントでログインします。2行目の結果で、利用するアカウントの横に <code>*</code> が表示されれば成功です。</p><p class="small">ログインできない場合はGoogle Cloud担当者へ連絡してください。認証コードやアクセストークンを人に渡さないでください。</p></div></article>
+
+      <article class="step"><div class="num">4</div><div><h3>接続先の情報を入力する</h3><p>次の <code>CONFIRMED_...</code> を、Google Cloud担当者から受け取った値に置き換え、PowerShellに貼り付けます。この設定はPowerShellを閉じると消えます。</p><pre>$env:MOCK_MODE = "false"
+$env:DATA_ROOT = "data-real"
+$env:GEAP_AUTH_MODE = "gcloud"
+$env:GEAP_PROJECT = "CONFIRMED_PROJECT_ID"
+$env:GEAP_LOCATION = "CONFIRMED_LOCATION"
+$env:GEAP_BUCKET = "CONFIRMED_TEMP_BUCKET"
+$env:GEAP_STAGE1_MODEL = "CONFIRMED_GEMINI_MODEL_ID"
+$env:GEAP_STAGE2_MODEL = "CONFIRMED_GEMINI_MODEL_ID"
+$env:MODEL_REVISION_SCOPE = "YOUR_VALIDATION_SESSION_VERSION"
+$env:GEAP_PRINCIPAL = "CONFIRMED_CALLER_IDENTITY"
+$env:MAX_UPLOAD_BYTES = "2147483648"
+$env:MIN_FREE_BYTES = "1073741824"
+$env:GEAP_ENVIRONMENT_CONFIRMED = "true"</pre><p class="small"><code>data-real</code> はモックのデータと分けて結果を保存する場所です。既存の <code>data</code> を消したり、同じ保存先で2つのサーバーを同時に動かしたりしないでください。</p></div></article>
+
+      <article class="step"><div class="num">5</div><div><h3>実接続モードで起動する</h3><p>続けて次を実行します。</p><pre>node server.js</pre><p>「Gemini TAS local app: http://127.0.0.1:4173」と表示されたら、そのURLをブラウザで開きます。「LOCAL MOCK」ではなくGoogle Cloudの接続先情報が表示されることを確認します。</p><p class="small">起動時に設定や権限のエラーが出たら、画面操作には進まず、そのメッセージをGoogle Cloud担当者へ共有してください。トークンや動画自体は共有しません。</p></div></article>
+
+      <article class="step"><div class="num">6</div><div><h3>合成入力を準備し、標準セットを作って分析する</h3><p>サーバーを起動したまま、別のPowerShellでリポジトリのフォルダーを開き、次を実行します。</p><pre>node tools/prepare-connectivity-inputs.mjs</pre><p>このコマンドは合成MP4を2本作り、同じPCのアプリに登録します。解析や外部API呼び出しは行いません。入力JSONは <code>connectivity-inputs</code> に作られます。既存のモック結果・標準セットはコピーしません。</p><ol><li>画面を再読み込みし、「標準セットを作成・確認」を開きます。</li><li>「語彙・識別条件を登録」を開き、語彙JSONに <code>connectivity-inputs/vocabulary.json</code>、識別条件JSONに <code>connectivity-inputs/discriminators.json</code> を選びます。これは人工的な工程名と空の識別条件です。内容を確認し、確認者名を入力して「確認済みとして登録」を押します。</li><li>標準動画に「合成・接続確認用標準24秒」、標準GT JSONに <code>connectivity-inputs/standard-gt.json</code>、確認済み語彙に登録した語彙を選びます。GTは今回登録した標準動画専用です。入力準備をやり直した場合は新しい動画とGTを組で選んでください。</li><li>セット名を「合成・接続確認」とします。案1の最小確認では「案2用記述も生成」「標準代表画像を生成」を外します。画面の同意欄を確認して「標準セットを生成」を押します。ここから実APIへ送信します。</li><li>「内容の確認待ち」になったら「生成した標準記述・不足申告を確認」を開きます。合成模様の動画には実作業は映っていないため、工程名の正解や精度は評価できません。不明・観察不足があっても接続失敗とは限りません。内容を確認して「内容を確認して公開」を押します。</li><li>標準セットを選び、登録済み実作業動画に「合成・接続確認用実作業30秒」を選択。「お手本と照合」と「案1：項目化した文章照合」で「解析を開始」を押します。</li></ol><div class="notice warn"><div class="icon">!</div><div><strong>実接続モードでは合成動画でもGoogle Cloudへ送信され、料金が発生し得ます。</strong>「サンプルを設定」はモック専用のため使いません。失敗は失敗として記録され、モック成功に置き換えません。この入力は疎通専用で、精度の評価には使えません。</div></div></div></article>
+
+      <article class="step"><div class="num">7</div><div><h3>成功を判断する</h3><p>次のすべてを確認できれば、今回の「接続できるか」の確認は成功です。</p><div class="check"><ul><li>画面が「完了」になり、候補と根拠が表示される</li><li>今回の分析が完了として履歴に残る（標準セット作成は別の履歴）</li><li>画面にエラーが出ない</li><li>標準セット作成と分析の各履歴で、一時媒体が「削除完了」、または送信なしの実行なら「対象なし」になる</li><li>履歴でモデル名を、画面上部の送信先表示でプロジェクト・リージョンを確認できる。実行時点の設定は「AI予測JSON」の execution で確認する</li></ul></div><p>最後に「お手本なしで分析」（Zero-Shot）へ切り替え、「同じ区間でラベルを再判定」を実行します。お手本あり／なしの両方で完了すれば、2つのモードの接続確認ができます。</p></div></article>
+
+      <article class="step"><div class="num">8</div><div><h3>終了する</h3><p>画面の実行が完了し、今回の各履歴の一時媒体が「削除完了」、または送信なしなら「対象なし」になったことを確認してから、PowerShellで <code>Ctrl + C</code> を押します。</p><p class="small"><code>data-real</code> には実行履歴や結果が残ります。動画原本・送信本文・生応答も含み、Git除外対象です。別のDATA_ROOTを使う場合はリポジトリ外を選んでください。確認結果を残す必要がある間は削除せず、保管・削除は運用担当者が判断します。</p></div></article>
+    </section>
+
+    <section class="card">
+      <h2>よくある状況と対応</h2>
+      <table><thead><tr><th>見えている状況</th><th>意味</th><th>次にすること</th></tr></thead><tbody>
+        <tr><td>「LOCAL MOCK」と表示される</td><td class="bad">外部接続はしていません</td><td>手順4の <code>MOCK_MODE=false</code> を確認して、サーバーを再起動します。</td></tr>
+        <tr><td>起動時に設定不足のメッセージ</td><td class="bad">接続情報が足りません</td><td>表示された項目名をGoogle Cloud担当者へ連絡します。</td></tr>
+        <tr><td>403エラー</td><td class="bad">権限が不足しています</td><td>ログインアカウント、API呼び出し権限、バケット権限を確認してもらいます。</td></tr>
+        <tr><td>「完了」と履歴が表示される</td><td class="good">分析処理が完了しました</td><td>手順7の全条件とZero-Shotを確認し、日時と結果を記録します。</td></tr>
+        <tr><td>費用が「不明」</td><td>料金表または使用量内訳が未確認</td><td>接続失敗ではありません。費用判断には使わず、料金情報を担当者に確認します。</td></tr>
+      </tbody></table>
+    </section>
+
+    <section class="card">
+      <h2>詳しい資料</h2>
+      <p>技術担当者向けの設定・権限・一時媒体の回収は、リポジトリ内の <a href="FEWSHOT_OPERATIONS.md">FEWSHOT_OPERATIONS.md</a> を参照してください。実接続の成功は、精度や費用の合格を意味しません。</p>
+    </section>
+  </main>
+  <footer>Few-shot TAS / 本番接続の確認ガイド</footer>
+</body>
+</html>

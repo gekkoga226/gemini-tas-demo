@@ -1,1 +1,9 @@
 .claude/settings.local.json
+tools/geap-probe/report.json
+tools/geap-probe/expected.json
+data/
+.local-validation/
+tools/geap-probe/runs/
+
+/data-real/
+/connectivity-inputs/

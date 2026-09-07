@@ -82,3 +82,28 @@ export function nudgeResult(segments, index, side, direction, step, maximumEnd) 
   }
   return { value, accepted };
 }
+
+// Round 18 warnings: one DOM-independent source for server, browser and probe.
+export function qualityWarningsV1(segments, vocabulary, duration) {
+  const warnings = [];
+  const add = (code, message, ids, fatal = false) => warnings.push({ code, message, segment_ids: [...new Set(ids)], fatal, policy_version: 'quality-policy.v1' });
+  let previousWork = null;
+  segments.forEach((s, i) => {
+    const label = vocabulary.find(l => l.job_no === s.job_no && l.job_title === s.job_title);
+    if (!label) add('OUT_OF_VOCABULARY', '語彙にないラベルです。再分析してください。', [s.segment_id], true);
+    if (!Number.isFinite(s.start_s) || !Number.isFinite(s.end_s) || s.start_s < 0 || s.end_s <= s.start_s || s.end_s > duration) add('INVALID_TIME', '区間時刻が不正です。再分析してください。', [s.segment_id], true);
+    if (i && s.start_s !== segments[i-1].end_s) add('TIME_DISCONTINUITY', '区間に重複・逆順・隙間があります。再分析してください。', [segments[i-1].segment_id,s.segment_id], true);
+    if (label?.standard_duration_s != null && ((s.end_s-s.start_s) < .5*label.standard_duration_s || (s.end_s-s.start_s) > 2*label.standard_duration_s)) add('DURATION_DEVIATION', '標準時間から大きく離れています。映像を確認してください。', [s.segment_id]);
+    if (label?.kind === 'work' && label.standard_order != null) {
+      if (previousWork && label.standard_order < previousWork.order) add('ORDER_REVERSAL', '標準書の順序と逆になっている候補です。実際の作業順を確認してください。', [previousWork.id,s.segment_id]);
+      previousWork = {order:label.standard_order,id:s.segment_id};
+    }
+  });
+  if (segments.length && (segments[0].start_s !== 0 || segments.at(-1).end_s !== duration)) add('INCOMPLETE_COVERAGE', '動画の全長を覆っていません。再分析してください。', segments.map(s=>s.segment_id), true);
+  const missing = vocabulary.filter(l=>l.kind==='work' && l.standard_order!=null && !segments.some(s=>s.job_no===l.job_no));
+  if (missing.length) add('MISSING_PROCESS', `工程抜けの候補: ${missing.map(l=>l.job_title).join('、')}。動画全体を確認してください。`, segments.map(s=>s.segment_id));
+  return warnings;
+}
+
+export const REVIEW_REASON_LABELS = Object.freeze({stage1_insufficient:'実作業の観察不足',standard_insufficient:'お手本の観察不足',forced_low:'同着による強制低下',ordinary_low:'生の確信度が閾値未満',fallback:'その他（判別不能）',quality_warning:'品質警告'});
+export function matchingSegment(segments, jobNo, currentTime) { return segments.find(s=>s.job_no===jobNo && s.start_s>=currentTime) ?? segments.find(s=>s.job_no===jobNo) ?? null; }

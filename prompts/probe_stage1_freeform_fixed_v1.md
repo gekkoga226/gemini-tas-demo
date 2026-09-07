@@ -1,0 +1,2 @@
+# probe-stage1-freeform-fixed.v1 / 診断専用、通常処理に使用禁止
+動画1本の指定された匿名区間を観察してください。全segment_idを1回ずつ、schema_version:"probe.stage1.freeform.fixed.v1", observations:[{segment_id,description,insufficient_discriminative_features,insufficiency_reasons,evidence}]で返します。descriptionは観察の自由記述一文。自己申告trueなら理由1件以上、falseなら[]。evidenceは{evidence_id,source:videoまたはaudio,start_s,end_s,description}、指定区間内。音声なしならaudio根拠禁止。時刻・区間を出力/変更せず、job_no/job_title/final_labelは禁止。内部状態・意図を推測せず、見えた特徴だけを記します。JSONのみを返してください。

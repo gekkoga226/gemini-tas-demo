@@ -1,0 +1,279 @@
+/* ===== UI改善提案モック — デザインシステム =====
+   最小フォントサイズ 12px / 白文字の帯は全色 4.5:1 以上 / フォーカスは破線 */
+:root {
+  color-scheme: light;
+  --ink: #17232b;
+  --muted: #4b5a63;          /* 白地に 7.14:1 */
+  --paper: #ffffff;
+  --canvas: #f1f4ef;
+  --line: #d7ded8;
+  --line-strong: #b6c1b9;
+  --accent: #0f5f57;
+  --accent-soft: #e7f2ef;
+  --lime: #c8f05a;
+  --danger: #a63d35;
+  --warn-bg: #fff3dc;
+  --warn-ink: #6b4408;
+  --play: #d92d20;           /* 白地に 4.83:1 */
+  --shadow: 0 10px 30px rgba(24, 40, 37, .08);
+  --focus: #0b3f8f;
+
+  /* 区間色：全色 白文字で 6.1〜7.4:1（実測） */
+  --c0: #0F6E64; --c1: #1F5FA0; --c2: #8A4A12; --c3: #6A4C93;
+  --c4: #2F6B3A; --c5: #8C3B4A; --c6: #3D5A80; --c7: #7A5C00;
+  /* AI レーン用の淡色：ink 文字で 10.6:1 以上 */
+  --p0: #c3dbd8; --p1: #c7d7e7; --p2: #e2d2c4; --p3: #dad2e4;
+  --p4: #cbdace; --p5: #e2ced2; --p6: #cfd6df; --p7: #ded6bf;
+}
+* { box-sizing: border-box; }
+/* display を持つクラス（.badge 等）がUAの [hidden]{display:none} に勝ってしまうのを防ぐ。
+   実アプリ側の #workspace / #videoPlaceholder が表示され続ける不具合と同じ原因。 */
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body {
+  margin: 0; background: var(--canvas); color: var(--ink);
+  font-family: "Yu Gothic UI", "Meiryo", system-ui, sans-serif;
+  font-size: 14px; line-height: 1.6;
+}
+button, input, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: not-allowed; opacity: .4; }
+h1, h2, h3 { margin: 0; }
+
+/* フォーカスは破線＋オフセット。選択状態（実線）と形状で区別する */
+:focus-visible { outline: 2px dashed var(--focus); outline-offset: 2px; border-radius: 4px; }
+
+/* ---------- ヘッダー ---------- */
+.hd {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  padding: 14px clamp(16px, 3vw, 32px);
+  background: rgba(255,255,255,.9); border-bottom: 1px solid var(--line);
+  position: sticky; top: 0; z-index: 40;
+}
+.hd h1 { font-size: 20px; letter-spacing: -.02em; }
+.hd .sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.hd-spacer { flex: 1; }
+.badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid var(--accent); border-radius: 999px; padding: 6px 12px;
+  color: var(--accent); background: var(--accent-soft); font-size: 12px; font-weight: 800;
+  white-space: nowrap;
+}
+.badge.warn { border-color: #c58a2a; color: var(--warn-ink); background: var(--warn-bg); }
+.badge.mono { font-variant-numeric: tabular-nums; }
+
+/* ---------- レイアウト ---------- */
+.wrap {
+  display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(380px, .8fr);
+  gap: 16px; align-items: start;
+  padding: 16px clamp(16px, 3vw, 32px) 48px;
+}
+.col-r { display: grid; gap: 16px; min-width: 0; }
+@media (min-width: 1100px) {
+  .col-l { position: sticky; top: 76px; }
+}
+@media (max-width: 1099px) { .wrap { grid-template-columns: 1fr; } }
+
+.card { border: 1px solid var(--line); border-radius: 14px; background: var(--paper); box-shadow: var(--shadow); padding: 18px; }
+.card-hd { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+.step { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: var(--lime); color: #22401f; font-size: 12px; font-weight: 900; flex: none; }
+.card-hd h2 { font-size: 17px; }
+.card-hd .grow { flex: 1; }
+
+/* ---------- ボタン ---------- */
+.btn {
+  min-height: 40px; border-radius: 8px; padding: 8px 16px;
+  border: 1px solid transparent; font-weight: 800; font-size: 13px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+}
+.btn.primary { color: #fff; background: var(--accent); }
+.btn.secondary { border-color: var(--line-strong); background: #fff; }
+.btn.ghost { border-color: transparent; background: transparent; color: var(--accent); }
+.btn.danger { color: #fff; background: var(--danger); }
+.btn.sm { min-height: 34px; padding: 6px 10px; font-size: 12px; }
+.tool {
+  min-height: 40px; min-width: 40px; padding: 6px 12px;
+  border: 1px solid var(--line-strong); border-radius: 8px; background: #fff;
+  font-size: 13px; font-weight: 700;
+}
+.tool[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.muted { color: var(--muted); font-size: 12px; }
+.mono { font-variant-numeric: tabular-nums; }
+
+/* ---------- 疑似映像 ---------- */
+.scene { position: relative; aspect-ratio: 16/9; border-radius: 10px; overflow: hidden; background: #0e1c1b; }
+.scene canvas { width: 100%; height: 100%; display: block; }
+.scene-tag {
+  position: absolute; left: 10px; top: 10px; padding: 4px 9px; border-radius: 6px;
+  background: rgba(8,20,18,.72); color: var(--lime); font-size: 12px; font-weight: 800; letter-spacing: .08em;
+}
+.transport { display: flex; align-items: center; gap: 8px; margin: 12px 0 10px; flex-wrap: wrap; }
+.transport .time { font-size: 15px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.transport .now { color: var(--muted); font-size: 13px; }
+.zoom { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.zoom .lbl { font-size: 12px; color: var(--muted); font-weight: 700; }
+
+/* ---------- タイムライン ---------- */
+.tl-wrap { display: grid; grid-template-columns: 92px minmax(0, 1fr); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: #fbfcfa; }
+.tl-gutter { border-right: 1px solid var(--line); background: #f4f7f3; }
+.tl-gutter > div { display: grid; align-content: center; padding: 0 10px; border-bottom: 1px solid var(--line); }
+.tl-gutter > div:last-child { border-bottom: 0; }
+.g-ruler { height: 26px; }
+.g-lane { height: 52px; font-size: 12px; font-weight: 800; }
+.g-lane small { display: block; font-size: 11px; font-weight: 600; color: var(--muted); }
+.g-lane.ai { color: var(--muted); }
+
+.tl-scroll { overflow-x: auto; overflow-y: hidden; }
+.tl-inner { position: relative; min-width: 100%; }
+
+/* 目盛り */
+.tl-ruler { position: relative; height: 26px; border-bottom: 1px solid var(--line); background: #f4f7f3; }
+.tl-tick { position: absolute; top: 0; bottom: 0; border-left: 1px solid var(--line-strong); }
+.tl-tick.minor { border-left-color: #e2e8e3; }
+.tl-tick > span { position: absolute; left: 4px; top: 4px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* レーン */
+.tl-lane { position: relative; height: 52px; border-bottom: 1px solid var(--line); }
+.tl-lane:last-of-type { border-bottom: 0; }
+.tl-lane.rv { background: #fff; }
+.tl-lane.ai { background: #f7f9f6; }
+
+/* 区間バー */
+.tl-bar {
+  position: absolute; top: 7px; bottom: 7px; border: 0; padding: 0; margin: 0;
+  border-radius: 4px; overflow: visible; text-align: left;
+  background: var(--bar); color: #fff;
+  display: flex; align-items: center; gap: 5px;
+  box-shadow: inset -1px 0 0 rgba(255,255,255,.85);   /* 白帯ではなく 1px の区切り */
+}
+.tl-lane.ai .tl-bar { background: var(--bar-pale); color: var(--ink); cursor: default; box-shadow: inset -1px 0 0 #fff; }
+.tl-bar .num {
+  flex: none; margin-left: 4px; min-width: 17px; height: 17px; padding: 0 3px;
+  border-radius: 4px; background: rgba(255,255,255,.24); color: #fff;
+  font-size: 12px; font-weight: 900; line-height: 17px; text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.tl-lane.ai .tl-bar .num { background: rgba(23,35,43,.14); color: var(--ink); }
+.tl-bar .txt { font-size: 12px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 5px; }
+
+/* ラベル適応：3段階 */
+.tl-bar.is-narrow .txt { display: none; }
+.tl-bar.is-narrow .num { margin: 0 auto; }
+.tl-bar.is-tiny { border-radius: 2px; }
+.tl-bar.is-tiny .txt, .tl-bar.is-tiny .num { display: none; }
+.tl-bar.is-tiny::before {                 /* ◆マーカー */
+  content: ""; position: absolute; left: 50%; top: 50%; width: 11px; height: 11px;
+  transform: translate(-50%, -50%) rotate(45deg); background: var(--bar);
+  box-shadow: 0 0 0 2px #fff;
+}
+.tl-lane.ai .tl-bar.is-tiny::before { background: var(--bar-pale); box-shadow: 0 0 0 2px #f7f9f6; }
+.tl-bar.is-tiny::after {                  /* 当たり判定を左右 12px ずつ拡張（計24px以上） */
+  content: ""; position: absolute; inset: -6px -12px;
+}
+.tl-bar.is-tiny { z-index: 4; }
+
+/* 選択：▼マーカー＋番号反転＋実線枠（色に依存しない） */
+.tl-bar.sel { box-shadow: inset 0 0 0 2px #10231f, 0 0 0 2px #fff; z-index: 6; }
+.tl-bar.sel .num { background: #fff; color: #10231f; }
+.tl-bar.sel::after {
+  content: "▼"; position: absolute; left: 50%; top: -15px; transform: translateX(-50%);
+  font-size: 12px; line-height: 1; color: #10231f; pointer-events: none;
+}
+.tl-bar.is-tiny.sel::after { content: "▼"; inset: auto; left: 50%; top: -15px; }
+.tl-lane.ai .tl-bar.sel { box-shadow: inset 0 0 0 2px #6b7a72, 0 0 0 2px #f7f9f6; }
+.tl-lane.ai .tl-bar.sel::after { display: none; }
+/* 変更された区間 */
+.tl-lane.rv .tl-bar.edited { background-image: repeating-linear-gradient(135deg, rgba(255,255,255,.22) 0 5px, transparent 5px 10px); }
+
+/* 境界ハンドル */
+.tl-handle {
+  position: absolute; top: 3px; bottom: 3px; width: 14px; margin-left: -7px;
+  border: 0; padding: 0; background: transparent; cursor: ew-resize; z-index: 8;
+  display: grid; place-items: center; opacity: 0; transition: opacity .12s;
+}
+.tl-lane.rv:hover .tl-handle, .tl-handle:focus-visible, .tl-handle.on { opacity: 1; }
+.tl-handle::before {
+  content: ""; width: 6px; height: 26px; border-radius: 3px;
+  background: #fff; border: 1px solid #10231f;
+  box-shadow: 0 1px 3px rgba(0,0,0,.35);
+}
+.tl-handle::after {                        /* グリップの縦線 */
+  content: ""; position: absolute; width: 2px; height: 12px;
+  border-left: 1px solid #10231f; border-right: 1px solid #10231f; opacity: .55;
+}
+.tl-handle.outer::before { height: 20px; border-style: dashed; }
+
+/* プレイヘッド */
+.tl-play { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--play); z-index: 12; pointer-events: none; box-shadow: 0 0 0 1.5px rgba(255,255,255,.9); }
+.tl-play .bub {
+  position: absolute; top: 1px; left: 50%; transform: translateX(-50%);
+  background: var(--play); color: #fff; font-size: 12px; font-weight: 800;
+  padding: 1px 6px; border-radius: 4px; white-space: nowrap; font-variant-numeric: tabular-nums;
+  box-shadow: 0 0 0 2px #f4f7f3;      /* 目盛りの数値に重なっても読めるように */
+}
+/* ドラッグ中のツールチップ */
+.tl-tip {
+  position: absolute; z-index: 20; transform: translate(-50%, -100%);
+  background: #10231f; color: #fff; font-size: 12px; font-weight: 800;
+  padding: 4px 8px; border-radius: 6px; white-space: nowrap; pointer-events: none;
+  font-variant-numeric: tabular-nums;
+}
+.tl-legend { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 10px; font-size: 12px; color: var(--muted); }
+.tl-legend b { color: var(--ink); }
+
+/* ---------- 区間一覧 ---------- */
+.list { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.row {
+  display: grid; grid-template-columns: 26px 1fr auto; gap: 10px; align-items: center;
+  width: 100%; border: 0; border-bottom: 1px solid var(--line); padding: 10px 11px;
+  background: #fff; text-align: left;
+}
+.row:last-child { border-bottom: 0; }
+.row:hover { background: #f7faf8; }
+.row.sel { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+.row .num {
+  display: grid; place-items: center; width: 26px; height: 26px; border-radius: 6px;
+  background: var(--bar); color: #fff; font-size: 12px; font-weight: 900;
+  font-variant-numeric: tabular-nums;
+}
+.row strong { display: block; font-size: 13px; }
+.row small { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.row .marks { display: flex; gap: 4px; align-items: center; }
+.pill { font-size: 11px; font-weight: 800; padding: 2px 7px; border-radius: 999px; white-space: nowrap; }
+.pill.edited { background: var(--warn-bg); color: var(--warn-ink); }
+.pill.tiny { background: #eef1ed; color: var(--muted); }
+
+/* ---------- 編集フォーム ---------- */
+.form { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+.fgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.fgrid .wide { grid-column: 1 / -1; }
+.field > .lbl { display: block; font-size: 12px; font-weight: 800; color: var(--muted); margin-bottom: 4px; }
+.field input[type="text"] { width: 100%; border: 1px solid var(--line-strong); border-radius: 7px; padding: 9px; background: #fff; font-size: 14px; }
+.field input.mono { font-variant-numeric: tabular-nums; }
+.spin { display: grid; grid-template-columns: 40px 1fr 40px; gap: 4px; }
+.spin button { border: 1px solid var(--line-strong); border-radius: 7px; background: #fff; font-size: 16px; font-weight: 800; min-height: 40px; }
+.orig { display: block; margin-top: 4px; font-size: 12px; color: var(--warn-ink); font-variant-numeric: tabular-nums; }
+.orig.same { color: var(--muted); }
+.err { display: block; margin-top: 4px; font-size: 12px; color: var(--danger); font-weight: 700; }
+.ro-grid { display: grid; gap: 8px; margin-top: 12px; }
+.ro { font-size: 12px; font-weight: 800; color: var(--muted); }
+.ro span { display: block; margin-top: 3px; padding: 8px 9px; border-radius: 7px; background: #f2f5f1; color: #2f3d38; font-weight: 400; font-size: 13px; line-height: 1.55; }
+.form-actions { display: flex; justify-content: space-between; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+
+/* ---------- モーダル / トースト ---------- */
+.backdrop { position: fixed; inset: 0; background: rgba(15,28,25,.5); display: grid; place-items: center; z-index: 90; }
+.modal { width: min(460px, calc(100vw - 32px)); background: #fff; border-radius: 14px; padding: 22px; box-shadow: 0 24px 80px rgba(0,0,0,.3); }
+.modal h3 { font-size: 17px; margin-bottom: 12px; }
+.modal .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+.toast-wrap { position: fixed; right: 18px; bottom: 18px; display: grid; gap: 8px; z-index: 95; }
+.toast {
+  display: flex; align-items: center; gap: 10px;
+  background: #21332e; color: #fff; padding: 11px 14px; border-radius: 9px;
+  font-size: 13px; box-shadow: var(--shadow); max-width: 420px;
+}
+.toast.warn { background: #6b4408; }
+.toast button { background: rgba(255,255,255,.16); border: 0; color: #fff; border-radius: 6px; padding: 3px 9px; font-size: 12px; font-weight: 800; }
+
+/* ---------- 注記 ---------- */
+.note { margin-top: 12px; padding: 10px 12px; border-radius: 8px; background: var(--accent-soft); color: #23514c; font-size: 12px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

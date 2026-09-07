@@ -5,6 +5,9 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { callGeminiText, FLASH_MODELS } from "./src/gemini.js";
 import { createMockPrediction, preparePrediction } from "./src/schema.js";
+import { TasService } from './src/pipeline.js';
+import { tasConfig } from './src/settings.js';
+import { routeTas } from './src/routes.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_ROOT = path.join(ROOT, "public");
@@ -19,6 +22,7 @@ export function loadConfig(environment = process.env) {
   const mockMode = String(environment.MOCK_MODE ?? "true").toLowerCase() !== "false";
   const port = Number.parseInt(environment.PORT || "4173", 10);
   return {
+    ...tasConfig(environment),
     mockMode,
     port: Number.isInteger(port) && port > 0 ? port : 4173,
     model: environment.GEMINI_MODEL || "gemini-3.1-pro-preview",
@@ -87,6 +91,8 @@ export function createAppServer(config = loadConfig(), options = {}) {
   const logger = options.logger || console;
   const geminiCaller = options.geminiCaller || callGeminiText;
   const allowedHosts = new Set([`127.0.0.1:${config.port}`, `localhost:${config.port}`]);
+  let tas = options.tasService || null;
+  const getTas = () => tas ||= options.tasService || new TasService({ ...tasConfig(), ...config }, options.tasOptions);
 
   const server = http.createServer(async (request, response) => {
     applySecurityHeaders(response);
@@ -97,7 +103,7 @@ export function createAppServer(config = loadConfig(), options = {}) {
 
     const url = new URL(request.url, `http://${host}`);
     if (request.method === "GET" && url.pathname === "/api/health") {
-      return writeJson(response, 200, { ok: true, mode: config.mockMode ? "mock" : "real-text-only" });
+      return writeJson(response, 200, { ok: true, mode: config.mockMode ? "mock" : "geap", api_version:'v1beta1' });
     }
     if (request.method === "GET" && url.pathname === "/api/session") {
       return writeJson(response, 200, {
@@ -108,6 +114,7 @@ export function createAppServer(config = loadConfig(), options = {}) {
       });
     }
     if (request.method === "POST" && url.pathname === "/api/analyze") {
+      if(!config.mockMode&&!options.geminiCaller)return writeJson(response,410,{code:'LEGACY_ROUTE_RETIRED',message:'この旧疎通確認経路は廃止されました。永続ジョブの解析を使用してください。'});
       if (request.headers["x-local-token"] !== sessionToken) {
         return writeJson(response, 403, { code: "TOKEN_REQUIRED", message: "ローカル操作トークンが無効です。画面を再読み込みしてください。" });
       }
@@ -134,6 +141,13 @@ export function createAppServer(config = loadConfig(), options = {}) {
       }
     }
 
+    if (url.pathname.startsWith('/api/')) {
+      if (request.method !== 'GET' && request.headers['x-local-token'] !== sessionToken) return writeJson(response,403,{code:'TOKEN_REQUIRED',message:'画面を再読み込みしてください。'});
+      try { await routeTas(request,response,url,getTas(),writeJson); }
+      catch(error) { const status=error.code==='ENOENT'?404:error.status||500;writeJson(response,status,{code:error.code||'REQUEST_FAILED',message:error.code==='ENOENT'?'登録済みデータが見つかりません。履歴と入力を確認してください。':error.status?error.message:'処理を完了できませんでした。保存先と設定を確認してください。'}); }
+      return;
+    }
+
     if (request.method !== "GET") return writeJson(response, 404, { code: "NOT_FOUND", message: "見つかりません。" });
     const relative = url.pathname === "/" ? "index.html" : url.pathname.slice(1);
     const absolute = path.resolve(PUBLIC_ROOT, relative);
@@ -148,14 +162,19 @@ export function createAppServer(config = loadConfig(), options = {}) {
       writeJson(response, 404, { code: "NOT_FOUND", message: "見つかりません。" });
     }
   });
+  server.on('close',()=>tas?.close().catch(()=>{}));
+  server.on('listening',()=>{if(config.port===0){const actual=server.address().port;allowedHosts.add(`127.0.0.1:${actual}`);allowedHosts.add(`localhost:${actual}`);}});
+  server.tas = getTas;
   return server;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   const config = loadConfig();
   const server = createAppServer(config);
+  await server.tas().ready;
   server.listen(config.port, "127.0.0.1", () => {
     console.log(`Gemini TAS local app: http://127.0.0.1:${config.port}`);
-    console.log(`Mode: ${config.mockMode ? "local mock (no Gemini communication)" : "real text-only synchronous Flash"}`);
+    console.log(`Mode: ${config.mockMode ? "local mock (synthetic results, no external communication)" : "Gemini / GEAP v1beta1 (unverified until measured)"}`);
   });
+  for(const signal of ['SIGINT','SIGTERM'])process.on(signal,async()=>{await server.tas().close();server.close(()=>process.exit(0));});
 }

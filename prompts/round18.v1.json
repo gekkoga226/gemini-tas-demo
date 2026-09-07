@@ -1,0 +1,55 @@
+{
+  "schema_version": "prompt-manifest.v1",
+  "release": "round18.v1",
+  "pairs": {
+    "unguided": "unguided-pair.v1",
+    "guided": "guided-pair.v1"
+  },
+  "prompts": {
+    "unguided_discover": {
+      "file": "stage1_discover_v1.md",
+      "version": "stage1-discover.v1",
+      "sha256": "1afbc535dd3756b5b7d864a649cfacd6d36c2b4960c12b1421aa01e6724ff4e6"
+    },
+    "unguided_fixed": {
+      "file": "stage1_fixed_v1.md",
+      "version": "stage1-fixed.v1",
+      "sha256": "ad84c31aef3e17db61c06a018551cc6b3065e718881597221d8e3864625ded96"
+    },
+    "guided_discover": {
+      "file": "stage1_guided_discover_v1.md",
+      "version": "stage1-guided-discover.v1",
+      "sha256": "1edadbd1240df8611e5b06a6065f2779399f317ec7f12803f51bba66b2b9d09c"
+    },
+    "guided_fixed": {
+      "file": "stage1_guided_fixed_v1.md",
+      "version": "stage1-guided-fixed.v1",
+      "sha256": "621b8b0a2b743a48635d14f55ce40e2dd353ce23be5264f50708a7edecf15b86"
+    },
+    "stage2_text": {
+      "file": "stage2_text_v1.md",
+      "version": "stage2-text.v1",
+      "sha256": "9b091c451037c3dab9e95ca808cac1b3bfccc35408fdc35d913a63c8efb5fd6c"
+    },
+    "stage2_visual": {
+      "file": "stage2_visual_v1.md",
+      "version": "stage2-visual.v1",
+      "sha256": "9bd243f190621831dc82b986c86102dbf9fa96cbdf0f5b3f53851e7c71352688"
+    },
+    "freeform_fixed": {
+      "file": "probe_stage1_freeform_fixed_v1.md",
+      "version": "probe-stage1-freeform-fixed.v1",
+      "sha256": "a5afbc93b76afb8159f6abb12fd11fe65de0525a5407ed2d7fec94b64dbcea3d"
+    },
+    "freeform_stage2": {
+      "file": "probe_stage2_freeform_v1.md",
+      "version": "probe-stage2-freeform.v1",
+      "sha256": "4fd8c03a4e17b94321862d9a9c12ae955362249dd890f09bea6588b68c009438"
+    },
+    "vocabulary": {
+      "file": "vocabulary_extract_v1.md",
+      "version": "vocabulary-extract.v1",
+      "sha256": "3ae7f969a7d02cc558b5a0fb73da55418b1b48da80a50816b88072ba71834425"
+    }
+  }
+}
