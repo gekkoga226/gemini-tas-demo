@@ -29,7 +29,7 @@
   <header><div>
     <p class="eyebrow">Few-shot TAS / 接続確認</p>
     <h1>本番接続の確認ガイド</h1>
-    <p class="lead">Gitからアプリを取得し、Google Cloud上のGeminiに接続できるかを、合成動画だけで安全に確認するための手順です。</p>
+    <p class="lead">Gitからアプリを取得し、Google Cloud上のGeminiに接続できるかを、合成動画だけで安全に確認するための手順です。社内ネットワークやプロキシで接続できない場合の切り分けも含みます。</p>
   </div></header>
   <main>
     <section class="card">
@@ -49,11 +49,18 @@
     </section>
 
     <section class="card">
+      <h2>このガイドはPowerShell用です</h2>
+      <p>以降のコマンドは、Windowsの<strong>PowerShell</strong>に貼り付けます。画面左側の表示が <code>PS C:\...</code> で始まることを確認してください。</p>
+      <div class="notice info"><div class="icon">i</div><div><strong><code>C:\...</code> だけで始まる場合はコマンドプロンプトです。</strong>その画面で <code>powershell</code> と入力してEnterを押し、先頭に <code>PS</code> が表示されてから続けてください。コマンドプロンプトでは <code>$env:...</code> の設定がエラーになります。</div></div>
+    </section>
+
+    <section class="card">
       <h2>始める前の準備</h2>
       <div class="check"><ul>
-        <li>このリポジトリを読む権限とGitのURL</li>
+        <li>公開リポジトリ <a href="https://github.com/gekkoga226/gemini-tas-demo">https://github.com/gekkoga226/gemini-tas-demo</a> へアクセスできること</li>
         <li>Node.js 20.11以上、FFmpeg と ffprobe</li>
         <li>Google Cloudへログインするための <code>gcloud</code></li>
+        <li>会社指定のネットワークまたはVPNと、接続できない場合の社内IT窓口</li>
         <li>Google Cloud担当者から受け取るプロジェクトID、リージョン、一時保存バケット、モデルID</li>
         <li>API呼び出しと、一時バケットの作成・読み取り・削除を行える権限</li>
         <li>接続確認用の合成動画。実作業動画は今回使いません。</li>
@@ -62,16 +69,40 @@
     </section>
 
     <section class="card">
+      <h2>社内ネットワークの事前確認</h2>
+      <p>社内ネットワークでは、外部サイトへの通信がファイアウォール、プロキシ、VPN、端末証明書、VPC Service Controlsで制限されることがあります。接続できない場合に個人回線や私物PCへ切り替えて回避せず、次の順で社内IT担当者へ確認してください。</p>
+      <table><thead><tr><th>通信先</th><th>用途</th><th>必要な通信</th></tr></thead><tbody>
+        <tr><td><code>accounts.google.com</code><br><code>oauth2.googleapis.com</code></td><td>会社指定Googleアカウントでのログインと認証更新</td><td>HTTPS（TCP 443）</td></tr>
+        <tr><td><code>storage.googleapis.com</code></td><td>接続確認用の合成動画を一時保存・確認・削除</td><td>HTTPS（TCP 443）</td></tr>
+        <tr><td><code>CONFIRMED_LOCATION-aiplatform.googleapis.com</code></td><td>Geminiへの分析依頼。<code>CONFIRMED_LOCATION</code> は担当者確認済みリージョンに置き換える</td><td>HTTPS（TCP 443）</td></tr>
+      </tbody></table>
+      <h3>利用者ができる簡易確認</h3>
+      <p>会社指定のネットワークまたはVPNへ接続した状態で、PowerShellに次を1行ずつ貼り付けます。最後の行のリージョンは担当者から受け取った値に置き換えます。</p>
+      <pre>Test-NetConnection oauth2.googleapis.com -Port 443
+Test-NetConnection storage.googleapis.com -Port 443
+Test-NetConnection CONFIRMED_LOCATION-aiplatform.googleapis.com -Port 443</pre>
+      <ul>
+        <li><code>TcpTestSucceeded : True</code> は、その通信先の443番ポートまで到達できたことを示します。ログインや権限の成功までは保証しません。</li>
+        <li><code>False</code>、名前解決エラー、タイムアウトは、社内IT担当者へ相談します。同じ操作を何度も繰り返す必要はありません。</li>
+        <li>証明書に関するエラーは、社内のSSL検査用証明書をNode.jsが信頼できていない可能性があります。証明書検証を無効化せず、社内IT担当者から正式な設定を受けてください。</li>
+      </ul>
+      <div class="notice warn"><div class="icon">!</div><div><strong>プロキシ利用時の注意</strong><code>gcloud</code> のログインが通っても、アプリからCloud StorageやGeminiへの通信が通るとは限りません。このアプリはNode.jsからも外部へ接続します。プロキシ必須の環境では、「gcloudとNode.jsの両方が上記通信先へ接続できる設定」が必要であることを社内IT担当者へ伝えてください。プロキシのID・パスワードをソースコードやGitへ保存しないでください。</div></div>
+      <h3>社内IT担当者へ送る依頼文</h3>
+      <div class="check"><p>「会社管理PCからFew-shot TASのGCP疎通確認を実施します。<code>accounts.google.com</code>、<code>oauth2.googleapis.com</code>、<code>storage.googleapis.com</code>、<code>＜リージョン＞-aiplatform.googleapis.com</code> へのHTTPS（TCP 443）通信を確認してください。gcloudに加え、Node.jsプロセスからの通信も必要です。プロキシ、SSL検査、VPN、送信元IP制限、VPC Service Controlsがある場合は、会社指定の方法または実行可能な管理端末をご案内ください。」</p></div>
+      <p class="small">ネットワークポリシー上このPCから許可できない場合は、社内IT担当者が指定する管理PC・VDIなど、許可済みの環境で実施します。私物PC、個人VPN、テザリングでの回避は行いません。</p>
+    </section>
+
+    <section class="card">
       <h2>手順</h2>
-      <article class="step"><div class="num">1</div><div><h3>アプリを取得する</h3><p>PowerShellを開き、作業用フォルダーで次を実行します。GitのURLは担当者から受け取ったものに置き換えてください。</p><pre>cd C:\work
-git clone &lt;担当者から受け取ったGitのURL&gt;
+      <article class="step"><div class="num">1</div><div><h3>アプリを取得する</h3><p>PowerShellを開き、作業用フォルダーで次を実行します。</p><pre>cd C:\work
+git clone https://github.com/gekkoga226/gemini-tas-demo.git
 cd gemini-tas-demo</pre><p class="small">すでにこのフォルダーがある場合は、cloneせずそのフォルダーを開いてください。</p></div></article>
 
       <article class="step"><div class="num">2</div><div><h3>まずモック画面を開く</h3><p>外部通信をしない画面確認です。ここで画面が開けば、PC上でアプリを動かす準備ができています。</p><pre>$env:MOCK_MODE = "true"
 npm.cmd start</pre><p>ブラウザで <code>http://127.0.0.1:4173/</code> を開き、右上に「LOCAL MOCK」と表示されることを確認します。</p><div class="notice warn"><div class="icon">!</div><div><strong>これは本番接続の確認ではありません。</strong>「LOCAL MOCK」はGeminiやGoogle Cloudへ接続しない試運転です。</div></div></div></article>
 
-      <article class="step"><div class="num">3</div><div><h3>モックを停止し、Google Cloudへログインする</h3><p>モックを起動していたPowerShellで <code>Ctrl + C</code> を押して停止します。続けて次を実行します。</p><pre>gcloud auth login
-gcloud auth list</pre><p>ブラウザが開いたら、会社から指定されたGoogleアカウントでログインします。2行目の結果で、利用するアカウントの横に <code>*</code> が表示されれば成功です。</p><p class="small">ログインできない場合はGoogle Cloud担当者へ連絡してください。認証コードやアクセストークンを人に渡さないでください。</p></div></article>
+      <article class="step"><div class="num">3</div><div><h3>モックを停止し、Google Cloudへログインする</h3><p>モックを起動していたPowerShellで <code>Ctrl + C</code> を押して停止します。会社指定のネットワークまたはVPNに接続していることを確認し、続けて次を実行します。</p><pre>gcloud auth login
+gcloud auth list</pre><p>ブラウザが開いたら、会社から指定されたGoogleアカウントでログインします。2行目の結果で、利用するアカウントの横に <code>*</code> が表示されれば成功です。</p><div class="notice warn"><div class="icon">!</div><div><strong>ログイン画面が開かない、タイムアウト、プロキシまたは証明書のエラーが出る場合は、手順4へ進みません。</strong>発生日時、実行した手順、エラー文を記録し、前の「社内IT担当者へ送る依頼文」と一緒に相談してください。認証コードやアクセストークンは記録・共有しません。</div></div></div></article>
 
       <article class="step"><div class="num">4</div><div><h3>接続先の情報を入力する</h3><p>次の <code>CONFIRMED_...</code> を、Google Cloud担当者から受け取った値に置き換え、PowerShellに貼り付けます。この設定はPowerShellを閉じると消えます。</p><pre>$env:MOCK_MODE = "false"
 $env:DATA_ROOT = "data-real"
@@ -85,7 +116,7 @@ $env:MODEL_REVISION_SCOPE = "YOUR_VALIDATION_SESSION_VERSION"
 $env:GEAP_PRINCIPAL = "CONFIRMED_CALLER_IDENTITY"
 $env:MAX_UPLOAD_BYTES = "2147483648"
 $env:MIN_FREE_BYTES = "1073741824"
-$env:GEAP_ENVIRONMENT_CONFIRMED = "true"</pre><p class="small"><code>data-real</code> はモックのデータと分けて結果を保存する場所です。既存の <code>data</code> を消したり、同じ保存先で2つのサーバーを同時に動かしたりしないでください。</p></div></article>
+$env:GEAP_ENVIRONMENT_CONFIRMED = "true"</pre><p class="small"><code>data-real</code> はモックのデータと分けて結果を保存する場所です。既存の <code>data</code> を消したり、同じ保存先で2つのサーバーを同時に動かしたりしないでください。最後の確認フラグは、ログイン、接続先、権限、送信範囲を担当者と確認した後だけ <code>true</code> にします。</p></div></article>
 
       <article class="step"><div class="num">5</div><div><h3>実接続モードで起動する</h3><p>続けて次を実行します。</p><pre>node server.js</pre><p>「Gemini TAS local app: http://127.0.0.1:4173」と表示されたら、そのURLをブラウザで開きます。「LOCAL MOCK」ではなくGoogle Cloudの接続先情報が表示されることを確認します。</p><p class="small">起動時に設定や権限のエラーが出たら、画面操作には進まず、そのメッセージをGoogle Cloud担当者へ共有してください。トークンや動画自体は共有しません。</p></div></article>
 
@@ -100,8 +131,11 @@ $env:GEAP_ENVIRONMENT_CONFIRMED = "true"</pre><p class="small"><code>data-real</
       <h2>よくある状況と対応</h2>
       <table><thead><tr><th>見えている状況</th><th>意味</th><th>次にすること</th></tr></thead><tbody>
         <tr><td>「LOCAL MOCK」と表示される</td><td class="bad">外部接続はしていません</td><td>手順4の <code>MOCK_MODE=false</code> を確認して、サーバーを再起動します。</td></tr>
+        <tr><td><code>TcpTestSucceeded : False</code>、名前解決エラー、タイムアウト</td><td class="bad">社内ネットワークから通信先へ到達できていません</td><td>VPNを確認し、通信先・時刻・エラー文を社内IT担当者へ連絡します。個人回線では回避しません。</td></tr>
+        <tr><td>プロキシ認証、証明書、<code>self signed certificate</code> などのエラー</td><td class="bad">社内プロキシまたはSSL検査への対応が必要です</td><td>証明書検証を無効化せず、gcloudとNode.jsの両方に必要な会社指定設定を社内IT担当者へ確認します。</td></tr>
         <tr><td>起動時に設定不足のメッセージ</td><td class="bad">接続情報が足りません</td><td>表示された項目名をGoogle Cloud担当者へ連絡します。</td></tr>
-        <tr><td>403エラー</td><td class="bad">権限が不足しています</td><td>ログインアカウント、API呼び出し権限、バケット権限を確認してもらいます。</td></tr>
+        <tr><td>403エラー</td><td class="bad">通信自体は到達し、権限または組織ポリシーで拒否された可能性があります</td><td>ログインアカウント、API呼び出し権限、バケット権限、VPC Service Controlsを確認してもらいます。エラーにIDやトラブルシューティングトークンがあれば一緒に伝えます。</td></tr>
+        <tr><td>一時動画のアップロードで失敗</td><td class="bad">Cloud Storageへの通信または作成権限に問題があります</td><td><code>storage.googleapis.com</code> への通信と、一時バケットの作成・取得・削除権限を確認してもらいます。</td></tr>
         <tr><td>「完了」と履歴が表示される</td><td class="good">分析処理が完了しました</td><td>手順7の全条件とZero-Shotを確認し、日時と結果を記録します。</td></tr>
         <tr><td>費用が「不明」</td><td>料金表または使用量内訳が未確認</td><td>接続失敗ではありません。費用判断には使わず、料金情報を担当者に確認します。</td></tr>
       </tbody></table>
