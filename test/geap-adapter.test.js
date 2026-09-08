@@ -1,0 +1,17 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {GeapAdapter,GcsAdapter} from '../src/geap.js';
+const config={approvedReal:true,bucket:'test-bucket',timeoutMs:100};
+const settings={project:'test',location:'test',host:'https://example.invalid',stage1_model:'explicit-model',stage2_model:'explicit-model',api_version:'v1beta1'};
+const response=(status,payload)=>new Response(JSON.stringify(payload),{status,headers:{'content-type':'application/json'}});
+test('429/5xx retry budget is two and honors Retry-After without sleeping in unit tests',async()=>{const waits=[];let calls=0;const a=new GeapAdapter(config,{tokenProvider:async()=>'',waitImpl:async ms=>waits.push(ms),fetchImpl:async()=>{calls++;return new Response('{}',{status:calls===1?429:500,headers:{'Retry-After':'7'}});}});await assert.rejects(a.call({settings,stage:'stage1',body:{}}),{code:'GEAP_HTTP_500'});assert.equal(calls,3);assert.deepEqual(waits,[7000,20000]);});
+test('GEAP refreshes 401 once, records attempts, keeps Part schema and v1beta1 without mock fallback',async()=>{
+  let calls=0,tokens=0;const logs=[];const a=new GeapAdapter(config,{tokenProvider:async()=>`ephemeral-${++tokens}`,fetchImpl:async(url,opts)=>{assert.ok(url.includes('/v1beta1/'));assert.equal(opts.headers.authorization,`Bearer ephemeral-${tokens}`);return ++calls===1?response(401,{}):response(200,{candidates:[{finishReason:'STOP',content:{parts:[{text:'{"ok":true}'}]}}],modelVersion:'reported-version',usageMetadata:{promptTokenCount:17}});}});
+  const out=await a.call({settings,stage:'stage1',body:{contents:[{role:'user',parts:[{fileData:{fileUri:'gs://test-bucket/a.mp4',mimeType:'video/mp4'},mediaProcessing:'AGENTIC'}]}]},onAttempt:async r=>logs.push(r)});assert.equal(out.output.ok,true);assert.equal(logs.length,2);assert.equal(tokens,2);assert.equal(JSON.stringify(logs).includes('ephemeral-'),false);
+});
+test('403 and timeout are explicit failures, incomplete and malformed output is rejected',async()=>{
+  for(const variant of ['403','timeout','truncated','json']){let calls=0;const a=new GeapAdapter(config,{tokenProvider:async()=>'',fetchImpl:async()=>{calls++;if(variant==='timeout')throw new Error('transport disconnected');if(variant==='403')return response(403,{});return response(200,{candidates:[{finishReason:variant==='truncated'?'MAX_TOKENS':'STOP',content:{parts:[{text:'not JSON'}]}}]});}});await assert.rejects(a.call({settings,stage:'stage2',body:{}}),e=>e.code===({'403':'PERMISSION_DENIED',timeout:'REMOTE_OUTCOME_UNKNOWN',truncated:'OUTPUT_NOT_COMPLETE',json:'INVALID_MODEL_OUTPUT'}[variant]));assert.equal(calls,1);}
+});
+test('GCS cleanup is generation-conditional, reconciles unknown upload, 404 is success and other paths are forbidden',async()=>{
+  const requests=[];const g=new GcsAdapter(config,{tokenProvider:async()=>'',fetchImpl:async(url,options)=>{requests.push({url,method:options.method});return options.method==='DELETE'?new Response(null,{status:404}):response(200,{generation:'123'});}});await g.remove({uri:'gs://test-bucket/tas-temp/local/run/object',generation:null});assert.equal(requests.length,2);assert.ok(requests[1].url.endsWith('ifGenerationMatch=123'));await assert.rejects(g.remove({uri:'gs://test-bucket/original.mp4',generation:'1'}),{code:'INVALID_TEMP_URI'});await assert.rejects(g.remove({uri:'gs://other/tas-temp/x',generation:'1'}),{code:'INVALID_TEMP_URI'});
+});

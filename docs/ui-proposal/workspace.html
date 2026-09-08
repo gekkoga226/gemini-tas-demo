@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UI改善提案｜作業区間アノテーション</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<header class="hd">
+  <div>
+    <h1>作業区間アノテーション</h1>
+    <div class="sub">line3_assembly_20260815.mp4 ・ 10分00秒 ／ 作業標準書_A2機種.pdf</div>
+  </div>
+  <div class="hd-spacer"></div>
+  <span class="badge" id="draftBadge" hidden>未確定の入力あり</span>
+  <span class="badge" id="dlBadge">すべて出力済み</span>
+  <span class="badge">UI改善提案モック</span>
+  <button class="btn secondary sm" id="btnReset" type="button">初期状態に戻す</button>
+</header>
+
+<div class="wrap">
+
+  <!-- ===== 02 動画とタイムライン（DOM順＝視覚順＝Tab順） ===== -->
+  <div class="col-l">
+    <section class="card" aria-labelledby="h02">
+      <div class="card-hd"><span class="step">02</span><h2 id="h02">動画とタイムライン</h2></div>
+
+      <div class="scene">
+        <canvas id="scene" aria-label="作業映像のプレビュー（モック）"></canvas>
+        <span class="scene-tag">MOCK 疑似映像</span>
+      </div>
+
+      <div class="transport">
+        <button class="tool" id="playBtn" type="button" aria-label="再生">▶</button>
+        <button class="tool" id="backBtn" type="button" aria-label="1秒戻す">−1s</button>
+        <button class="tool" id="fwdBtn" type="button" aria-label="1秒進める">＋1s</button>
+        <span class="time mono" id="clock">00:00:00 / 00:10:00</span>
+        <span class="now" id="nowSeg">—</span>
+        <span class="zoom">
+          <span class="lbl">ズーム</span>
+          <button class="tool" data-zoom="1" type="button" aria-pressed="true">1x</button>
+          <button class="tool" data-zoom="2" type="button" aria-pressed="false">2x</button>
+          <button class="tool" data-zoom="4" type="button" aria-pressed="false">4x</button>
+          <button class="tool" data-zoom="8" type="button" aria-pressed="false">8x</button>
+        </span>
+      </div>
+
+      <div id="tl"></div>
+
+      <div class="tl-legend">
+        <span><b>⟨⟩</b> 境界をドラッグすると前後の区間が連動します（隙間も重複もできません）</span>
+        <span><b>▼</b> 選択中</span>
+        <span><b>┃</b> 再生位置</span>
+        <span><b>◆</b> 短い区間（クリック領域は広げてあります）</span>
+        <span><b>斜線</b> AI予測から修正済み</span>
+      </div>
+      <div class="note">
+        キーボード：<b>Space</b> 再生/停止、<b>←→</b> 1秒移動（Shiftで5秒）、境界ハンドルにフォーカスして <b>←→</b> で1秒ずつ、<b>Home/End</b> で可動端まで。
+      </div>
+    </section>
+  </div>
+
+  <div class="col-r">
+
+    <!-- ===== 03 区間を確認・修正 ===== -->
+    <section class="card" aria-labelledby="h03">
+      <div class="card-hd">
+        <span class="step">03</span><h2 id="h03">区間を確認・修正</h2>
+        <span class="grow"></span>
+        <span class="muted" id="segCount">全16区間</span>
+        <span class="badge" id="editedCount">修正なし</span>
+      </div>
+
+      <div class="transport" style="margin-top:0">
+        <button class="tool" id="btnSplit" type="button">▮ 再生位置で分割</button>
+        <button class="tool" id="btnUndo" type="button" disabled>↶ 元に戻す</button>
+        <button class="tool" id="btnRedo" type="button" disabled>↷ やり直す</button>
+      </div>
+
+      <div class="list" id="list"></div>
+      <div class="form" id="form"></div>
+    </section>
+
+    <!-- ===== 04 JSON出力 ===== -->
+    <section class="card" aria-labelledby="h04">
+      <div class="card-hd"><span class="step">04</span><h2 id="h04">JSON出力</h2></div>
+      <div class="fgrid">
+        <button class="btn secondary" id="dlAi" type="button">AI予測JSON</button>
+        <button class="btn primary" id="dlReviewed" type="button">確認・修正済みJSON</button>
+      </div>
+      <p class="muted" id="dlHint" style="margin:10px 0 0">内部ID、モード名、API情報はJSONへ含めません。</p>
+    </section>
+
+  </div>
+</div>
+
+<script src="assets/data.js"></script>
+<script src="assets/store.js"></script>
+<script src="assets/shell.js"></script>
+<script src="assets/scene.js"></script>
+<script src="assets/timeline.js"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,2 @@
+# probe-stage2-freeform.v1 / 診断専用
+自由記述のお手本と実作業記述を語彙・識別条件に照合してください。項目化Observationの代わりにdescription一文があります。根拠refのfieldはdescriptionを使用してください。その他の出力制約は追加されたstage2-text.v1の指示と同じです。区間時刻は出力/変更せず、全segment_idを1回ずつ返します。自由記述を項目別unknown率として評価しないでください。

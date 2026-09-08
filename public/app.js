@@ -1,4 +1,5 @@
 import * as Segments from "./segments.js";
+import {createWorkflow} from "./fewshot.js";
 
 const SEGMENT_KEYS = ["start_time", "end_time", "duration_seconds", "job_no", "page_number", "job_title", "work_content", "hand_movement", "tools_and_parts"];
 // 区間色は分類を意味しないため統一し、番号で区別する。
@@ -36,6 +37,7 @@ const state = {
   undoStack: [],
   redoStack: [],
   dirty: false,
+  formDirty: false,
   timestamp: "",
 };
 
@@ -50,7 +52,8 @@ function pushHistory(before) {
 function cleanSegments(segments, reviewed = false) {
   return segments.map((segment) => Object.fromEntries(SEGMENT_KEYS.map((key) => [key, reviewed && key === "duration_seconds" ? timeToSeconds(segment.end_time) - timeToSeconds(segment.start_time) : segment[key]])));
 }
-function maximumEnd() { return Math.max(1, Math.ceil(state.videoDuration || 30)); }
+function maximumEnd() { return Math.max(1, state.videoDuration || 30); }
+function axisEnd(){return Math.max(maximumEnd(),state.standardDuration||0); }
 
 function validateSegments(segments) { return Segments.validateSegments(segments, maximumEnd()); }
 
@@ -112,114 +115,11 @@ function beginProgress() {
   });
 }
 
-function updateInputState() {
-  const ready = state.demoInput || (state.videoFile && state.pdfFile && state.videoDuration > 0 && state.pdfPages > 0);
-  const realReady = state.session?.mockMode || (state.session?.apiKeyConfigured && state.session?.realModelAllowed);
-  $("#startButton").disabled = !ready || state.running || !realReady;
-  if (state.demoInput) $("#inputSummary").textContent = "30秒・4区間の決定的サンプルを使用します。";
-  else if (ready) $("#inputSummary").textContent = `動画 ${secondsToTime(state.videoDuration)} ／ PDF ${state.pdfPages}ページ`;
-  else $("#inputSummary").textContent = "動画とPDFを選択するか、サンプル入力を使ってください。";
-  if (!state.session?.mockMode && !state.session?.apiKeyConfigured) $("#inputSummary").textContent = "APIキーは管理者による設定が必要です。";
-  else if (!state.session?.mockMode && !state.session?.realModelAllowed) $("#inputSummary").textContent = "実API検証にはGEMINI_MODELでFlashを指定してください。Proは実行しません。";
-}
-
-async function inspectPdf(file) {
-  if (!file || !file.name.toLowerCase().endsWith(".pdf") || file.size === 0 || file.size > 50 * 1024 * 1024) throw new Error("0バイトではない50MB以下のPDFを選んでください。");
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  const text = new TextDecoder("latin1").decode(bytes);
-  if (!text.startsWith("%PDF-")) throw new Error("PDFとして開けるファイルを選んでください。");
-  if (/\/Encrypt\b/.test(text)) throw new Error("暗号化されていないPDFを選んでください。");
-  const pages = (text.match(/\/Type\s*\/Page\b/g) || []).length;
-  const counts = [...text.matchAll(/\/Count\s+(\d+)/g)].map((match) => Number(match[1]));
-  const pageCount = pages || Math.max(0, ...counts);
-  if (!pageCount || pageCount > 1000) throw new Error("1,000ページ以下でページ数を確認できるPDFを選んでください。");
-  return pageCount;
-}
-
-function selectVideo(file) {
-  state.demoInput = false;
-  if (!file || !file.name.toLowerCase().endsWith(".mp4") || file.size === 0 || file.size > 2 * 1024 ** 3) { toast("0バイトではない2GB以下のMP4を選んでください。"); return; }
-  state.videoFile = file; state.videoDuration = 0;
-  if (state.videoUrl) URL.revokeObjectURL(state.videoUrl);
-  state.videoUrl = URL.createObjectURL(file);
-  const player = $("#videoPlayer"); player.src = state.videoUrl;
-  $("#videoPlaceholder").hidden = true;
-  $("#videoMeta").textContent = `${file.name} ・ ${formatBytes(file.size)} ・ 読込中`;
-  player.onloadedmetadata = () => {
-    if (!Number.isFinite(player.duration) || player.duration <= 0) { toast("ブラウザで再生できるMP4を選んでください。"); return; }
-    state.videoDuration = player.duration;
-    $("#videoMeta").textContent = `${file.name} ・ ${formatBytes(file.size)} ・ ${secondsToTime(Math.ceil(player.duration))}`;
-    updateInputState();
-  };
-  player.onerror = () => toast("動画を再生できません。別のMP4を選んでください。");
-  updateInputState();
-}
-async function selectPdf(file) {
-  state.demoInput = false; state.pdfFile = null; state.pdfPages = 0;
-  $("#pdfMeta").textContent = "確認中"; updateInputState();
-  try {
-    const pages = await inspectPdf(file);
-    state.pdfFile = file; state.pdfPages = pages;
-    $("#pdfMeta").textContent = `${file.name} ・ ${formatBytes(file.size)} ・ ${pages}ページ`;
-  } catch (error) { $("#pdfMeta").textContent = "未選択"; toast(error.message); }
-  updateInputState();
-}
-function useDemoInput() {
-  state.demoInput = true; state.videoFile = null; state.pdfFile = null; state.videoDuration = 30; state.pdfPages = 4;
-  if (state.videoUrl) URL.revokeObjectURL(state.videoUrl);
-  $("#videoPlayer").removeAttribute("src"); $("#videoPlayer").load(); $("#videoPlaceholder").hidden = false;
-  $("#videoMeta").textContent = "mock_video.mp4 ・ 内容なし ・ 00:00:30";
-  $("#pdfMeta").textContent = "mock_standard.pdf ・ 内容なし ・ 4ページ";
-  updateInputState(); toast("ファイル内容を使わないサンプル入力を設定しました。");
-}
-
-async function startAnalysis() {
-  if (state.running) return;
-  const notice = state.session.mockMode
-    ? "ローカル模擬処理を開始します。Geminiへの通信は行いません。"
-    : "Flashへ固定テキストだけを同期送信します。選択した動画・PDFの内容は送信しません。";
-  const replaceMessage = state.prediction.length
-    ? state.dirty
-      ? " 現在の結果と未保存の修正は、新しい解析結果に置き換わります。"
-      : " 現在の結果は、新しい解析結果に置き換わります。"
-    : "";
-  const confirmed = await confirmAction({
-    title: "解析を開始しますか",
-    message: `${notice}${replaceMessage}`,
-    acceptLabel: "解析を開始",
-    danger: state.dirty,
-  });
-  if (!confirmed) return;
-  state.running = true; state.cancelRequested = false; state.controller = new AbortController();
-  $("#startButton").disabled = true; $("#cancelButton").hidden = false; beginProgress();
-  try {
-    const response = await fetch("/api/analyze", {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-local-token": state.session.token },
-      body: JSON.stringify({ videoDurationSeconds: state.videoDuration, pdfPageCount: state.pdfPages }),
-      signal: state.controller.signal,
-    });
-    if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body.message || "解析に失敗しました。再実行してください。"); }
-    const body = await response.json();
-    if (state.cancelRequested) return;
-    state.prediction = clone(body.prediction); state.reviewed = clone(body.prediction);
-    state.predictionWarnings = clone(body.warnings || []); state.warnings = validateSegments(state.reviewed); state.selected = 0; state.view = "reviewed";
-    state.undoStack = []; state.redoStack = []; state.dirty = false; state.timestamp = timestamp(); state.currentTime = 0; state.timelineZoom = 1;
-    $("#timelineScroll").scrollLeft = 0; $("#workspace").hidden = false; setStatus("done", "完了", state.session.mockMode ? "ローカルの模擬結果を表示しています。" : "Flashのテキスト同期結果を表示しています。実ファイルは送信していません。");
-    render();
-  } catch (error) {
-    if (!state.cancelRequested && error.name !== "AbortError") setStatus("error", "エラー", error.message);
-  } finally {
-    clearProgressTimers(); state.running = false; state.controller = null; $("#cancelButton").hidden = true; updateInputState();
-  }
-}
-function cancelAnalysis() {
-  if (!state.running) return;
-  state.cancelRequested = true; state.controller?.abort(); clearProgressTimers(); state.running = false;
-  $("#cancelButton").hidden = true;
-  const message = state.session.mockMode ? "ローカルの模擬処理を停止しました。" : "画面での待機を中止しました。Gemini側の処理停止は保証できません。";
-  setStatus("cancelled", "中止", message); updateInputState();
-}
+function updateInputState(){workflow.inputState();}
+function selectVideo(file){return workflow.selectVideo(file);}
+function useDemoInput(){return workflow.demo();}
+function startAnalysis(){return workflow.start(false);}
+function cancelAnalysis(){return workflow.cancel();}
 
 function currentSegments() { return state.view === "reviewed" ? state.reviewed : state.prediction; }
 function activeIndex() { return currentSegments().findIndex((segment) => timeToSeconds(segment.start_time) <= state.currentTime && state.currentTime < timeToSeconds(segment.end_time)); }
@@ -237,7 +137,7 @@ function timelineMinorStep(majorStep) {
   return steps.filter((value) => value < majorStep && majorStep % value === 0 && value <= majorStep / 3).at(-1) || null;
 }
 function renderRuler() {
-  const ruler = $("#timelineRuler"); const duration = maximumEnd(); const step = timelineStep(duration); const minorStep = timelineMinorStep(step); const majorPoints = []; const minorPoints = [];
+  const ruler = $("#timelineRuler"); const duration = axisEnd(); const step = timelineStep(duration); const minorStep = timelineMinorStep(step); const majorPoints = []; const minorPoints = [];
   for (let second = 0; second < duration; second += step) majorPoints.push(second);
   majorPoints.push(duration);
   if (minorStep) {
@@ -268,7 +168,7 @@ function sizeTimelineTrack() {
 function timelineSecondsAtClientX(clientX) {
   const rect = $("#timelineTrack").getBoundingClientRect();
   if (!rect.width) return 0;
-  return Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)) * maximumEnd();
+  return Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)) * axisEnd();
 }
 function setTimelineScrollLeft(left) {
   const scroll = $("#timelineScroll"); const maximum = Math.max(0, scroll.scrollWidth - scroll.clientWidth);
@@ -277,7 +177,7 @@ function setTimelineScrollLeft(left) {
 function ensureTimelineTimeVisible(seconds, center = false) {
   const scroll = $("#timelineScroll"); const track = $("#timelineTrack");
   if (!scroll.clientWidth || !track.clientWidth) return;
-  const x = (Math.max(0, Math.min(maximumEnd(), seconds)) / maximumEnd()) * track.clientWidth;
+  const x = (Math.max(0, Math.min(axisEnd(), seconds)) / axisEnd()) * track.clientWidth;
   const margin = Math.min(48, scroll.clientWidth * .12); const left = scroll.scrollLeft; const right = left + scroll.clientWidth;
   if (center || x < left + margin || x > right - margin) setTimelineScrollLeft(x - scroll.clientWidth / 2);
 }
@@ -308,6 +208,7 @@ function seek(seconds) {
   renderPlayback(true);
 }
 function selectSegment(index, seekVideo = true) {
+  if (!applyPendingDetail()) return;
   if (!currentSegments()[index]) return;
   state.selected = index; if (seekVideo) seek(timeToSeconds(currentSegments()[index].start_time)); render(); ensureTimelineSegmentVisible(index);
 }
@@ -316,7 +217,7 @@ function renderPlayback(followPlayhead = false) {
   $("#playbackTime").textContent = `${secondsToTime(state.currentTime)} / ${secondsToTime(maximumEnd())}`;
   const index = activeIndex(); const segment = currentSegments()[index];
   $("#activeSegmentLabel").textContent = segment ? `区間${String(index + 1).padStart(2, "0")} / ${segment.job_title}` : "該当する作業区間なし";
-  const playhead = $("#playhead"); const duration = maximumEnd();
+  const playhead = $("#playhead"); const duration = axisEnd();
   playhead.style.left = `${(state.currentTime / duration) * 100}%`;
   playhead.dataset.time = secondsToTime(state.currentTime);
   playhead.classList.toggle("at-start", state.currentTime <= .5);
@@ -336,7 +237,7 @@ function renderPlayback(followPlayhead = false) {
   if (followPlayhead) ensureTimelineTimeVisible(state.currentTime);
 }
 function renderTimeline() {
-  const segments = currentSegments(); const duration = maximumEnd(); const container = $("#timelineSegments"); container.replaceChildren(); const trackWidth = sizeTimelineTrack();
+  const segments = currentSegments(); const duration = axisEnd(); const container = $("#timelineSegments"); container.replaceChildren(); const trackWidth = sizeTimelineTrack();
   renderRuler();
   segments.forEach((segment, index) => {
     const start = timeToSeconds(segment.start_time) ?? 0; const end = timeToSeconds(segment.end_time) ?? start; const width = ((end - start) / duration) * 100; const pixelWidth = (width / 100) * trackWidth;
@@ -371,6 +272,7 @@ function renderTimeline() {
 }
 function applyBoundary(index, side, seconds) { return Segments.applyBoundary(state.reviewed, index, side, seconds, maximumEnd()); }
 function nudgeHandle(event, index, side) {
+  if (!applyPendingDetail()) return;
   if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
   event.preventDefault(); event.stopPropagation(); const before = clone(state.reviewed);
   const direction = event.key === "ArrowLeft" ? -1 : 1; const step = event.shiftKey ? 5 : 1;
@@ -380,6 +282,7 @@ function nudgeHandle(event, index, side) {
   requestAnimationFrame(() => document.querySelector(`.segment-block[data-segment-index="${index}"] .drag-handle.${side}`)?.focus());
 }
 function beginHandleDrag(event, index, side) {
+  if (!applyPendingDetail()) return;
   event.stopPropagation(); event.preventDefault(); const original = clone(state.reviewed); let wasClamped = false;
   const move = (pointerEvent) => {
     const seconds = Math.round(timelineSecondsAtClientX(pointerEvent.clientX));
@@ -417,6 +320,7 @@ function renderList() {
   if (selectedRow) selectedRow.scrollIntoView({ block: "nearest", inline: "nearest" });
 }
 function renderDetail() {
+  if (state.formDirty) return;
   const panel = $("#detailPanel"); const segment = currentSegments()[state.selected];
   if (!segment) { panel.innerHTML = '<p class="empty-state">区間を選択してください。</p>'; return; }
   const readOnly = state.view !== "reviewed";
@@ -440,10 +344,17 @@ function saveDetail(event) {
   ["start_time", "end_time", "job_no", "page_number", "job_title"].forEach((key) => { segment[key] = String(form.get(key) || "-"); });
   segment.duration_seconds = (timeToSeconds(segment.end_time) ?? 0) - (timeToSeconds(segment.start_time) ?? 0);
   const errors = validateSegments(state.reviewed);
-  if (editWorsened(validateSegments(before), errors, state.selected)) { state.reviewed = before; toast(errors[state.selected][0]); render(); return; }
-  pushHistory(before); state.dirty = true; state.warnings = errors; state.reviewed.sort((a, b) => timeToSeconds(a.start_time) - timeToSeconds(b.start_time)); state.selected = state.reviewed.indexOf(segment); render(); toast("変更を確定しました。");
+  if (editWorsened(validateSegments(before), errors, state.selected)) { state.reviewed = before; toast(errors[state.selected][0]); return false; }
+  state.formDirty = false; pushHistory(before); state.dirty = true; state.warnings = errors; state.reviewed.sort((a, b) => timeToSeconds(a.start_time) - timeToSeconds(b.start_time)); state.selected = state.reviewed.indexOf(segment); render(); toast("区間に反映しました。履歴への保存はまだです。"); return true;
+}
+function applyPendingDetail() {
+  if (!state.formDirty) return true;
+  const form = $("#detailForm");
+  if (!form.reportValidity()) return false;
+  return saveDetail({preventDefault(){},currentTarget:form});
 }
 async function deleteSegment() {
+  if (!applyPendingDetail()) return;
   const segment = state.reviewed[state.selected]; if (!segment) return;
   const confirmed = await confirmAction({
     title: `区間${String(state.selected + 1).padStart(2, "0")}を削除しますか`,
@@ -455,30 +366,28 @@ async function deleteSegment() {
   pushHistory(state.reviewed); state.reviewed.splice(state.selected, 1); state.selected = Math.min(state.selected, state.reviewed.length - 1); state.dirty = true; state.warnings = validateSegments(state.reviewed); render();
 }
 function openAddDialog() {
+  if (!applyPendingDetail()) return;
   const start = Math.min(Math.floor(state.currentTime), maximumEnd() - 1); const form = $("#addForm");
-  form.elements.start_time.value = secondsToTime(start); form.elements.end_time.value = secondsToTime(Math.min(maximumEnd(), start + 5)); form.elements.job_no.value = ""; form.elements.page_number.value = ""; form.elements.job_title.value = ""; $("#addError").textContent = ""; $("#addDialog").showModal();
+  form.elements.start_time.value = secondsToTime(start); form.elements.end_time.value = secondsToTime(Math.min(maximumEnd(), start + 5)); form.elements.job_no.value = ""; form.elements.page_number.value = ""; form.elements.job_title.value = ""; workflow.prepareAdd();$("#addError").textContent = ""; $("#addDialog").showModal();
 }
 function addSegment(event) {
   event.preventDefault(); const form = new FormData($("#addForm"));
-  const segment = { start_time: String(form.get("start_time")), end_time: String(form.get("end_time")), duration_seconds: 0, job_no: String(form.get("job_no") || "-"), page_number: String(form.get("page_number") || "-"), job_title: String(form.get("job_title") || "-"), work_content: "-", hand_movement: "-", tools_and_parts: "-" };
+  const segment = { segment_id: `human-${crypto.randomUUID()}`, start_time: String(form.get("start_time")), end_time: String(form.get("end_time")), duration_seconds: 0, job_no: String(form.get("job_no") || "-"), page_number: String(form.get("page_number") || "-"), job_title: String(form.get("job_title") || "-"), work_content: "-", hand_movement: "-", tools_and_parts: "-" };
   segment.duration_seconds = (timeToSeconds(segment.end_time) ?? 0) - (timeToSeconds(segment.start_time) ?? 0);
   const next = [...clone(state.reviewed), segment].sort((a, b) => (timeToSeconds(a.start_time) ?? 0) - (timeToSeconds(b.start_time) ?? 0)); const errors = validateSegments(next);
   const addedIndex = next.indexOf(segment);
   if (errors[addedIndex]?.length) { $("#addError").textContent = errors[addedIndex][0]; return; }
   pushHistory(state.reviewed); state.reviewed = next; state.selected = state.reviewed.indexOf(segment); if (state.selected < 0) state.selected = next.findIndex((item) => item.start_time === segment.start_time && item.end_time === segment.end_time); state.dirty = true; state.warnings = errors; $("#addDialog").close(); render();
 }
-function undo() { if (!state.undoStack.length) return; state.redoStack.push(clone(state.reviewed)); state.reviewed = state.undoStack.pop(); state.selected = Math.min(state.selected, state.reviewed.length - 1); state.dirty = true; state.warnings = validateSegments(state.reviewed); render(); }
-function redo() { if (!state.redoStack.length) return; state.undoStack.push(clone(state.reviewed)); state.reviewed = state.redoStack.pop(); state.selected = Math.min(state.selected, state.reviewed.length - 1); state.dirty = true; state.warnings = validateSegments(state.reviewed); render(); }
+function undo() {
+  if (!applyPendingDetail()) return; if (!state.undoStack.length) return; state.redoStack.push(clone(state.reviewed)); state.reviewed = state.undoStack.pop(); state.selected = Math.min(state.selected, state.reviewed.length - 1); state.dirty = true; state.warnings = validateSegments(state.reviewed); render(); }
+function redo() {
+  if (!applyPendingDetail()) return; if (!state.redoStack.length) return; state.undoStack.push(clone(state.reviewed)); state.reviewed = state.redoStack.pop(); state.selected = Math.min(state.selected, state.reviewed.length - 1); state.dirty = true; state.warnings = validateSegments(state.reviewed); render(); }
 
-function download(type) {
-  const isReviewed = type === "reviewed"; const source = isReviewed ? state.reviewed : state.prediction;
-  if (isReviewed) { const errors = validateSegments(source); if (errors.some((items) => items.length)) { toast(`修正が必要です: ${errors.flat()[0]}`); return; } }
-  const data = cleanSegments(source, isReviewed); const blob = new Blob([`${JSON.stringify(data, null, 2)}\n`], { type: "application/json;charset=utf-8" }); const url = URL.createObjectURL(blob); const link = document.createElement("a");
-  link.href = url; link.download = `${safeBaseName()}_${type}_${state.timestamp}.json`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 0);
-  if (isReviewed) { state.dirty = false; renderDirty(); }
-}
-function renderDirty() { const badge = $("#dirtyBadge"); badge.className = `dirty-badge ${state.dirty ? "dirty" : "clean"}`; badge.textContent = state.dirty ? "未出力の変更あり" : "変更なし"; }
+function download(type){return workflow.download(type);}
+function renderDirty() { const badge = $("#dirtyBadge"); badge.className = `dirty-badge ${state.dirty || state.formDirty ? "dirty" : "clean"}`; badge.textContent = state.formDirty ? "区間に未反映（保存時に検証・反映）" : state.dirty ? "履歴に未保存" : "変更なし"; }
 function render() {
+  workflow.warnings();
   const reviewedActive = state.view === "reviewed";
   $("#reviewedTab").classList.toggle("active", reviewedActive); $("#predictionTab").classList.toggle("active", !reviewedActive);
   $("#reviewedTab").setAttribute("aria-selected", String(reviewedActive)); $("#predictionTab").setAttribute("aria-selected", String(!reviewedActive));
@@ -487,9 +396,10 @@ function render() {
   const undoCount = state.undoStack.length, redoCount = state.redoStack.length;
   $("#undoButton").disabled = !undoCount || state.view !== "reviewed"; $("#redoButton").disabled = !redoCount || state.view !== "reviewed";
   $("#undoButton").textContent = undoCount ? `↶ Undo (${undoCount})` : "↶ Undo"; $("#redoButton").textContent = redoCount ? `↷ Redo (${redoCount})` : "↷ Redo";
-  renderTimeline(); renderList(); renderDetail(); renderDirty();
+  renderTimeline(); renderList(); renderDetail(); renderDirty(); workflow.extras();
 }
 function switchView(view, focusTab = false) {
+  if (!applyPendingDetail()) return;
   state.view = view; state.selected = Math.min(state.selected, currentSegments().length - 1);
   state.warnings = view === "reviewed" ? validateSegments(state.reviewed) : clone(state.predictionWarnings);
   render();
@@ -507,16 +417,10 @@ function bindDrop(zoneSelector, inputSelector, handler) {
   for (const eventName of ["dragleave", "drop"]) zone.addEventListener(eventName, (event) => { event.preventDefault(); zone.classList.remove("dragover"); });
   zone.addEventListener("drop", (event) => handler(event.dataTransfer.files[0]));
 }
-async function initialize() {
-  try {
-    const response = await fetch("/api/session"); if (!response.ok) throw new Error(); state.session = await response.json();
-    $("#modeBadge").textContent = state.session.mockMode ? "LOCAL MOCK｜Gemini通信なし" : "REAL API｜Flash・テキスト同期のみ";
-    $("#inputNotice").textContent = state.session.mockMode ? "モックモードではファイル内容をGeminiへ送信せず、ローカルの模擬進捗と決定的な結果を返します。" : "実APIモードはFlashへ固定テキストだけを同期送信します。動画・PDFはGeminiへ送信しません。中止してもクラウド側の停止は保証できません。";
-    $("#inputNotice").className = `notice ${state.session.mockMode ? "neutral" : "warning"}`; updateInputState();
-  } catch { setStatus("error", "起動エラー", "ローカルサーバーへ接続できません。再起動してください。"); }
-}
+const workflow=createWorkflow({state,$,render,setStatus,toast,renderDirty,seek,applyPendingDetail});
+function initialize(){return workflow.initialize();}
 
-bindDrop("#videoDrop", "#videoInput", selectVideo); bindDrop("#pdfDrop", "#pdfInput", selectPdf);
+bindDrop("#videoDrop", "#videoInput", selectVideo);
 $("#demoInputButton").addEventListener("click", useDemoInput); $("#startButton").addEventListener("click", startAnalysis); $("#cancelButton").addEventListener("click", cancelAnalysis);
 $("#timelineTrack").addEventListener("click", (event) => seek(timelineSecondsAtClientX(event.clientX)));
 $("#timeline").addEventListener("keydown", (event) => {
@@ -539,5 +443,6 @@ window.addEventListener("resize", () => {
   cancelAnimationFrame(timelineResizeFrame);
   timelineResizeFrame = requestAnimationFrame(() => { if (!$("#workspace").hidden && currentSegments().length) { renderTimeline(); ensureTimelineTimeVisible(state.currentTime); } });
 });
-window.addEventListener("beforeunload", (event) => { if (state.dirty) { event.preventDefault(); event.returnValue = ""; } });
+window.addEventListener("beforeunload", (event) => { if (state.dirty || state.formDirty) { event.preventDefault(); event.returnValue = ""; } });
+for (const eventName of ["input", "change"]) $("#detailPanel").addEventListener(eventName, () => { if(state.view === "reviewed") { state.formDirty = true; renderDirty(); } });
 initialize();
