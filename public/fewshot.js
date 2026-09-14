@@ -1,14 +1,20 @@
+import {analysisReadiness,runPresentation} from './analysis-state.js';
+import {standardSources} from './standard-analytics.js';
+import {renderStandardCharts} from './standard-charts.js';
+import {createStandardEditor} from './standard-editor.js';
 import {createRunObserver} from './run-observer.js';
 import {secondsToTime,timeToSeconds,matchingSegment,REVIEW_REASON_LABELS,validateSegments} from './segments.js';
 const STRATEGIES={text_only:'案1：項目化した文章照合',vocabulary_guided:'案2：語彙補助の文章照合',visual_evidence:'案3：映像根拠併用'};
 const STATUS={queued:'受付',preparing:'準備',uploading:'送信',stage1_running:'区間分割',stage1_ready:'区間分割保存済み',stage2_running:'ラベル照合',validating:'結果検証',persisting:'保存',retry_wait:'再試行待ち',succeeded:'完了',failed:'失敗',cancel_requested:'中断要求済み',cancelled:'中断',interrupted:'前回処理の中断',awaiting_approval:'内容の確認待ち'};
+const setStatusText=s=>s.status==='ready'?'公開済み':s.status==='retired'?'利用停止':s.approval_available?'内容の確認待ち':STATUS[s.build_status??s.status]??s.status;
 const CLEANUP={not_needed:'対象なし',pending:'削除待ち',waiting_lease:'参照・猶予期間の終了待ち',deleting:'削除中',retry_wait:'削除失敗・再試行待ち',deleted:'削除完了',cleanup_failed:'削除が24時間以上未完了・対応が必要'};
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const costText=c=>c?.total===null||c?.total===undefined?'不明（未測定／内訳不足）':`${Number(c.total).toFixed(4)} ${c.currency??''}（${c.cost_status==='estimated'?'概算':'追加APIなし'}）`;
 export function createWorkflow({state,$,render,setStatus,toast,renderDirty,seek,applyPendingDetail}) {
   let config=null,sets=[],media=[],vocabularies=[],mode='few_shot',activeRun=null,result=null,display=null,review=null,buildId=null,originalReview=[];
   let standardSegments=[],standardExamples=[],standardImages=[],lastStandardId=null,lastActualId=null,syncBusy=false;
-  let vocabularyRunId=null;
+  let vocabularyRunId=null,editor=null,submitting=false,pendingUploads=0,resultSet=null,inspectedSet=null,restoreObservedInputs=false;
+  const busy=()=>state.running||submitting||pendingUploads>0;
   async function api(url,body,method) {const response=await fetch(url,{method:method||(body?'POST':'GET'),headers:body?{'content-type':'application/json','x-local-token':state.session.token}:{},...(body?{body:JSON.stringify(body)}:{})});const data=await response.json();if(!response.ok){const error=new Error(`${data.message} (${data.code})`);error.status=response.status;throw error;}return data;}
   const safely=fn=>async(...args)=>{try{await fn(...args);}catch(e){toast(e.message);setStatus('error','操作を完了できません',e.message);}};
   function settings() {return {...config.settings,processing_mode:$('#processingMode').value,fps:Number($('#inputFps').value),audio_enabled:$('#audioEnabled').checked,prompt_release:$('#promptRelease').value};}
@@ -19,40 +25,56 @@ export function createWorkflow({state,$,render,setStatus,toast,renderDirty,seek,
   function inputState() {
     if(!config)return;
     const set=sets.find(s=>s.standard_set_id===$('#standardSet').value),strategy=$('#analysisStrategy').value,video=media.find(m=>m.video_id===$('#registeredVideo').value);
-    const profile=strategy==='vocabulary_guided'?'guided':'unguided';
-    const available=(mode==='zero_shot'&&!set?Boolean($('#vocabularySelect').value):set?.status==='ready'&&set.description_profiles[profile]&&(strategy!=='visual_evidence'||mode==='zero_shot'||set.representative_images.length>0));
-    $('#startButton').disabled=state.running||!video||!available||!$('#consentConfirmed').checked||!config.ready;
-    $('#inputSummary').textContent=!config.ready?config.checks.filter(c=>!c.ok).map(c=>c.message).join(' '):!available?'利用可能な公開セット／語彙を選択してください。必要な記述・画像は「標準セットを作成・確認」から生成できます。':video?`${video.display_name} ／ ${secondsToTime(video.duration_s)} ／ ${mode==='few_shot'?'お手本あり':'お手本なし'} ／ ${STRATEGIES[strategy]}`:'実作業動画を登録・選択してください。';
+    const readiness=analysisReadiness({config,video,set,vocabulary:$('#vocabularySelect').value,mode,strategy,settings:settings(),busy:busy(),consent:$('#consentConfirmed').checked});
+    $('#startButton').disabled=!readiness.ready;
+    $('#inputSummary').textContent=pendingUploads?'動画をローカルへ登録・検証しています。':submitting?'分析を受け付けています。':readiness.message;
+    $('#readinessList').innerHTML=readiness.checks.filter(c=>c.key!=='consent').map(c=>`<li class="${c.ok?'is-ready':''}"><span class="check-mark" aria-hidden="true">${c.ok?'✓':'○'}</span><span>${esc(c.text)}</span></li>`).join('');
+    $('#videoMeta').textContent=pendingUploads?'ローカルへ登録・検証中':video?`選択中：${video.display_name} ／ ${secondsToTime(video.duration_s)}`:'動画はまだ選ばれていません';
+    $('#videoDrop').classList.toggle('selected',Boolean(video));
+    $('#vocabularyChoice').hidden=mode!=='zero_shot';
     const rerunCompatible=result&&sameStage1Settings(result.execution,settings())&&result.input.video_id===video?.video_id&&result.standard_set_id===(set?.standard_set_id??null)&&((result.analysis_strategy==='vocabulary_guided')===(strategy==='vocabulary_guided'));
     $('#rerunStage2').textContent=result&&!rerunCompatible?'区間分割から再分析':'同じ区間でラベルを再判定';
-    $('#rerunStage2').disabled=$('#startButton').disabled||!result;
-    $('#inputNotice').textContent=config.mode==='mock'?'LOCAL MOCK：結果・観察・候補・使用量は合成データです。動画はローカル保存のみ、外部通信はありません。方式の精度差を測定した結果ではありません。':`送信先：貴社Google Cloud / ${config.settings.project} / ${config.settings.location}。Stage1は実動画1本。${strategy==='visual_evidence'?`Stage2も実動画1本${mode==='few_shot'?'と標準代表JPEG':'（標準画像なし）'}を送信します。`:'Stage2再判定は文章だけを送信します。'} 実接続の精度・費用・運用成立は未検証です。`;
+    $('#rerunStage2').disabled=!readiness.ready||!result;
+    $('#inputNotice').textContent=config.mode==='mock'?'合成モック：動画はこのPCに保存します。外部通信はありません。結果・使用量は合成データです。':`送信先：Google Cloud / ${config.settings.project} / ${config.settings.location}。動画1本を送信します。${strategy==='visual_evidence'?`照合時も実動画${mode==='few_shot'?`とお手本の代表画像${set?.representative_images.length??0}枚`:''}を使用します。`:'同じ区間の再判定は文章のみです。'} 業務精度・長時間性能・費用は未検証です。`;
     $('#settingsSummary').textContent=`モデル：${config.settings.stage1_model??'未設定'} / ${config.settings.stage2_model??'未設定'}\n音声：${settings().audio_enabled?'あり':'なし（音声トラックを除去）'} / FPS：${settings().fps} / ${settings().processing_mode}\n${state.running?'実行中の設定は固定されています。変更は次回の実行に適用します。':''}`;
-    $('#pdfMeta').textContent=set?`${set.name} ／ ${set.status} ／ ${set.representative_images.length}枚`:'標準セット未選択';
+    $('#pdfMeta').textContent=set?`${set.name} ／ ${setStatusText(set)} ／ お手本${set.sources?.length??1}本・代表画像${set.representative_images.length}枚`:'お手本は「お手本を登録・確認」から準備できます。';
+    editor?.update();
   }
   function fillSelect(el,items,valueKey,text,empty='選択してください') {const previous=el.value;el.replaceChildren(new Option(empty,''),...items.map(x=>new Option(text(x),x[valueKey])));if(items.some(x=>x[valueKey]===previous))el.value=previous;}
   async function refreshInputs() {
+    const priorAssets=JSON.stringify([media.map(m=>m.video_id),vocabularies.map(v=>v.ref)]);
     const [a,b,c]=await Promise.all([api('/api/standard-sets'),api('/api/media'),api('/api/vocabularies')]);sets=a.standard_sets;media=b.media.filter(a=>a.mime_type==='video/mp4');vocabularies=c.vocabularies;
-    fillSelect($('#standardSet'),sets.filter(s=>s.status!=='retired'),'standard_set_id',s=>`${s.name}（${s.status==='ready'?'公開済み':STATUS[s.status]??s.status}）`);
-    fillSelect($('#registeredVideo'),media.filter(m=>m.mime_type==='video/mp4'),'video_id',m=>m.display_name);fillSelect($('#buildVideo'),media.filter(m=>m.mime_type==='video/mp4'),'video_id',m=>m.display_name);
-    fillSelect($('#vocabularySelect'),vocabularies,'ref',v=>v.vocabulary.vocabulary_version,'標準セットの語彙を使用');fillSelect($('#buildVocabulary'),vocabularies,'ref',v=>v.vocabulary.vocabulary_version);inputState();
+    fillSelect($('#standardSet'),sets.filter(s=>s.status!=='retired'),'standard_set_id',s=>`${s.name}（${setStatusText(s)}）`);
+    fillSelect($('#registeredVideo'),media,'video_id',m=>m.display_name);fillSelect($('#librarySet'),sets,'standard_set_id',s=>`${s.name}（${setStatusText(s)}・${s.sources?.length??1}本）`,'新しいセットを作成');
+    fillSelect($('#vocabularySelect'),vocabularies,'ref',v=>v.vocabulary.vocabulary_version,'標準セットの語彙を使用');fillSelect($('#buildVocabulary'),vocabularies,'ref',v=>v.vocabulary.vocabulary_version);if(priorAssets!==JSON.stringify([media.map(m=>m.video_id),vocabularies.map(v=>v.ref)]))editor?.refresh();inputState();
+  }
+  async function uploadVideo(file) {
+    if(!file||file.size===0||!file.name.toLowerCase().endsWith('.mp4'))throw new Error('0バイトではないMP4動画を選んでください。');
+    if(file.size>config.limits.max_upload_bytes)throw new Error('動画が登録上限を超えています。短い動画を選ぶか管理者へ確認してください。');
+    const response=await fetch('/api/media',{method:'POST',headers:{'content-type':'video/mp4','x-display-name':encodeURIComponent(file.name),'x-local-token':state.session.token},body:file});
+    const data=await response.json();if(!response.ok)throw new Error(data.message);
+    await refreshInputs();return data;
   }
   async function selectVideo(file) {
-    if(!file||file.size===0||!file.name.toLowerCase().endsWith('.mp4'))throw new Error('0バイトではないMP4動画を選んでください。');
-    $('#videoMeta').textContent='ローカルへ登録・検証中';$('#startButton').disabled=true;
-    const r=await fetch('/api/media',{method:'POST',headers:{'content-type':'video/mp4','x-display-name':encodeURIComponent(file.name),'x-local-token':state.session.token},body:file});const data=await r.json();if(!r.ok)throw new Error(data.message);
-    await refreshInputs();$('#registeredVideo').value=data.video_id;$('#videoMeta').textContent=`登録済み：${data.display_name} ／ ${secondsToTime(data.duration_s)}`;inputState();toast('動画をローカルに登録しました。');
+    if(!file)return;
+    pendingUploads++;inputState();
+    try {const video=await uploadVideo(file);$('#registeredVideo').value=video.video_id;$('#consentConfirmed').checked=false;toast('動画をこのPCに登録しました。');}
+    finally{pendingUploads--;$('#videoInput').value='';inputState();}
   }
   async function demo() {
     $('#demoInputButton').disabled=true;setStatus('running','合成サンプルを準備中','ローカルの再生用動画、標準記述、代表画像を作成します。');
-    try{const d=await api('/api/demo-fixture',{});await refreshInputs();$('#registeredVideo').value=d.actual_video_id;$('#buildVideo').value=d.standard_video_id;$('#buildVocabulary').value=d.vocabulary_ref;$('#standardSet').value=d.standard_set_id;buildId=d.standard_set_id;activeRun=d.run_id;$('#setManager').hidden=false;await observe(d.run_id);if(sets.find(s=>s.standard_set_id===d.standard_set_id)?.status==='ready')await inspectSet(d.standard_set_id);inputState();}finally{$('#demoInputButton').disabled=false;}
+    try{const d=await api('/api/demo-fixture',{});await refreshInputs();$('#registeredVideo').value=d.actual_video_id;$('#buildVocabulary').value=d.vocabulary_ref;editor?.refresh();$('#standardSet').value=d.standard_set_id;buildId=d.standard_set_id;activeRun=d.run_id;$('#setManager').hidden=false;await observe(d.run_id);if(sets.find(s=>s.standard_set_id===d.standard_set_id)?.status==='ready')await inspectSet(d.standard_set_id);inputState();}finally{$('#demoInputButton').disabled=false;}
   }
   async function start(reuse=false) {
-    if(state.running)return;
-    if(state.dirty||state.formDirty)await persistReview(false);
+    if(busy())return;
+    inputState();if($('#startButton').disabled)return;
+    submitting=true;inputState();
+    try {
     const strategy=$('#analysisStrategy').value,compatible=result&&sameStage1Settings(result.execution,settings())&&((strategy==='vocabulary_guided')===(result.analysis_strategy==='vocabulary_guided'))&&result.input.video_id===$('#registeredVideo').value&&result.standard_set_id===($('#standardSet').value||null);
     const request={client_request_id:crypto.randomUUID(),input_video_id:$('#registeredVideo').value,standard_set_id:$('#standardSet').value||null,vocabulary_ref:$('#standardSet').value?null:$('#vocabularySelect').value,discriminator_ref:null,analysis_strategy:strategy,analysis_mode:mode,settings:settings(),stage1_artifact_id:reuse&&compatible?result.stage1.artifact_id:null,parent_run_id:reuse&&result?result.run_id:null,comparison_session_id:null,consent_confirmed:$('#consentConfirmed').checked};
+    if(state.dirty||state.formDirty)await persistReview(false);
     const r=await api('/api/analysis-runs',request);localStorage.setItem('tas-active-run',r.run_id);await observe(r.run_id);
+    }finally{submitting=false;inputState();}
   }
   const observe=createRunObserver({
     read:observeOnce,
@@ -60,37 +82,52 @@ export function createWorkflow({state,$,render,setStatus,toast,renderDirty,seek,
     onError:(error,failures)=>{$('#connectionStatus').textContent=failures?`画面の接続が途切れています（${failures}回）。最後の状態を表示中。自動で再確認します。`:'前回の実行がこの保存先に見つかりません。実行履歴から選び直してください。';}
   });
   async function observeOnce(runId,isCurrent) {
-    activeRun=runId;const r=await api(`/api/analysis-runs/${runId}`);
+    const r=await api(`/api/analysis-runs/${runId}`);
     if(!isCurrent())return false;
-    const ended=['succeeded','failed','cancelled','interrupted','awaiting_approval'].includes(r.status);state.running=!ended;state.startedAt=Date.parse(r.started_at??r.created_at);$('#cancelButton').hidden=ended;
+    if(restoreObservedInputs){restoreObservedInputs=false;if(r.job_kind==='analysis'){$('#registeredVideo').value=r.input_video_id;$('#standardSet').value=r.standard_set_id??'';$('#analysisStrategy').value=r.analysis_strategy;mode=r.analysis_mode;restoreSettings(r.settings);modeTabs();}}
+    activeRun=runId;localStorage.setItem('tas-active-run',runId);const activeUrl=new URL(location.href);activeUrl.searchParams.delete('new');window.history.replaceState(null,'',activeUrl);
+    const presentation=runPresentation(r),ended=presentation.ended;state.running=!ended;state.startedAt=Date.parse(r.started_at??r.created_at);$('#cancelButton').hidden=ended;
     const elapsed=Math.floor((Date.parse(r.finished_at??new Date().toISOString())-state.startedAt)/1000);$('#elapsedText').textContent=`${Math.floor(elapsed/60).toString().padStart(2,'0')}:${(elapsed%60).toString().padStart(2,'0')}`;
-    setStatus(r.status==='failed'?'error':ended?'done':'running',STATUS[r.status]??r.status,r.error?.message??(config.mode==='mock'?'合成データによる処理です。サーバー側の実際の処理段階を表示しています。':'サーバーで処理を継続しています。'));
+    setStatus(presentation.kind,STATUS[r.status]??r.status,presentation.message);
+    const phaseDetail=r.phase_history?.at(-1)?.detail;
+    $('#activeRunSummary').textContent=`${r.job_kind==='standard_build'?`お手本セットの作成${phaseDetail?.source_index?`：${phaseDetail.source_index} / ${phaseDetail.source_count}本目`:''}`:r.job_kind==='vocabulary_extract'?'作業名一覧の抽出':`対象：${media.find(m=>m.video_id===r.input_video_id)?.display_name??r.input_video_id} ／ ${STRATEGIES[r.analysis_strategy]??''}`} ／ 受付 ${new Date(r.created_at).toLocaleString()}`;
+    $('#resultLink').hidden=!r.result_available;
+    $('#cleanupStatus').dataset.pending=String(presentation.observe_cleanup);
     $('#cleanupStatus').textContent=`一時媒体：${CLEANUP[r.cleanup.cleanup_status]}${r.remote_outcome_unknown?' ／ リモート結果不明・猶予リースあり':''}`;
-    if(r.job_kind==='standard_build'&&r.status==='awaiting_approval'){buildId=r.standard_set_id;await refreshInputs();$('#standardSet').value=buildId;$('#setManager').hidden=false;await inspectSet(buildId);}
+    if(r.job_kind==='standard_build'&&r.status==='awaiting_approval'){buildId=r.standard_set_id;await refreshInputs();$('#standardSet').value=buildId;$('#setManager').hidden=false;if(inspectedSet?.standard_set_id!==buildId||!inspectedSet.approval_available)await inspectSet(buildId);}
     if(r.job_kind==='vocabulary_extract'&&r.status==='awaiting_approval'){vocabularyRunId=r.run_id;const draft=await api(`/api/vocabulary-extractions/${r.run_id}`);$('#setManager').hidden=false;$('#vocabularyDraft').hidden=false;$('#vocabularyDraft').parentElement.open=true;$('#draftVocabulary').value=JSON.stringify(draft.vocabulary,null,2);$('#draftDiscriminators').value=JSON.stringify(draft.discriminators,null,2);}
-    if(r.result_available&&result?.run_id!==runId)await openResult(runId);
+    if(r.result_available&&result?.run_id!==runId)await openResult(runId,false);
     if(ended){await refreshInputs();if(!isCurrent())return false;await history();}
     inputState();
-    return !ended||!['deleted','not_needed'].includes(r.cleanup.cleanup_status);
+    return !ended||presentation.observe_cleanup;
   }
   async function cancel(){if(activeRun){await api(`/api/analysis-runs/${activeRun}/cancel`,{});await observe(activeRun);}}
-  async function openResult(runId) {
+  async function openResult(runId,restoreInputs=true) {
     const nextResult=await api(`/api/analysis-runs/${runId}/result`),nextDisplay=await api(`/api/analysis-runs/${runId}/display`);
     const set=nextResult.standard_set_id?await api(`/api/standard-sets/${nextResult.standard_set_id}/inspection`):null;
     const reviews=(await api(`/api/analysis-runs/${runId}/reviews`)).reviews;
     const savedReview=(state.dirty||state.formDirty)?await persistReview(false):null;
     if(savedReview?.original_run_id===runId)reviews.push(savedReview);
     if(state.dirty||state.formDirty)throw new Error('保存中に新しい入力がありました。現在の入力を保存してから結果を開いてください。');
-    result=nextResult;display=nextDisplay;review=reviews.at(-1)??null;
+    result=nextResult;resultSet=set;display=nextDisplay;review=reviews.at(-1)??null;
     state.result=result;state.prediction=structuredClone(display.prediction);state.reviewed=structuredClone(display.prediction);originalReview=review?.segments??result.segments;
     if(review)state.reviewed=review.segments.map(s=>{const d=display.prediction.find(x=>x.segment_id===s.segment_id);return {...(d??{work_content:'人による追加',hand_movement:'-',tools_and_parts:'-'}),segment_id:s.segment_id,start_time:secondsToTime(s.start_s),end_time:secondsToTime(s.end_s),duration_seconds:Math.floor(s.end_s)-Math.floor(s.start_s),job_no:s.job_no,job_title:s.job_title,page_number:s.page_number};});
     state.videoDuration=result.input.duration_s;state.demoInput=false;state.videoUrl=`/api/media/${result.input.video_id}/content`;$('#videoPlayer').src=state.videoUrl;$('#videoPlaceholder').hidden=true;
     state.predictionWarnings=result.segments.map(s=>s.review_reasons.map(k=>REVIEW_REASON_LABELS[k]));state.warnings=structuredClone(state.predictionWarnings);state.selected=0;state.view='reviewed';state.undoStack=[];state.redoStack=[];state.dirty=false;state.currentTime=0;state.timestamp=result.created_at;$('#workspace').hidden=false;
-    standardSegments=set?.display_segments??[];standardExamples=set?.examples?.[result.analysis_strategy==='vocabulary_guided'?'guided':'unguided']??[];standardImages=set?.representative_images??[];state.standardDuration=set?.source_video.duration_s??0;
-    if(set)$('#standardPlayer').src=`/api/media/${set.source_video.video_id}/content`;else $('#standardPlayer').removeAttribute('src');
+    standardExamples=set?.examples?.[result.analysis_strategy==='vocabulary_guided'?'guided':'unguided']??[];standardImages=set?.representative_images??[];
+    const sources=standardSources(set);fillSelect($('#standardSource'),sources,'source_id',s=>s.name,'お手本を選択');$('#standardSource').value=sources[0]?.source_id??'';chooseResultSource();
+    renderStandardCharts($('#resultAnalytics'),set??{sources:[],vocabulary:{labels:[]},provenance:{synthetic:result.mock},status:'ready'},{actual:result,onSelect:(source,segment)=>{if(source.kind==='standard'){$('#standardSource').value=source.source_id;chooseResultSource();$('#standardPlayer').currentTime=segment.start_s;render();}else seek(segment.start_s);}});
     $('#standardInferenceNotice').textContent=result.examples_used?'上段：公開済み標準セットのお手本。実作業GTは表示しません。':'お手本なし：上段は表示用です。標準記述・標準画像は推論へ送信していません。';
     $('#reviewHistory').textContent=reviews.length?`修正履歴 ${reviews.length}件 ／ 最終確認：${review.editor} ／ ${new Date(review.created_at).toLocaleString()}`:'人による確認はまだ保存されていません。';
-    $('#standardSet').value=result.standard_set_id??'';$('#registeredVideo').value=result.input.video_id;$('#analysisStrategy').value=result.analysis_strategy;mode=result.analysis_mode;restoreSettings(result.execution);modeTabs();render();
+    if(restoreInputs){$('#standardSet').value=result.standard_set_id??'';$('#registeredVideo').value=result.input.video_id;$('#analysisStrategy').value=result.analysis_strategy;$('#consentConfirmed').checked=false;mode=result.analysis_mode;restoreSettings(result.execution);}
+    modeTabs();render();
+  }
+  function chooseResultSource() {
+    const source=standardSources(resultSet).find(s=>s.source_id===$('#standardSource').value);
+    standardSegments=source?.display_segments??[];state.standardDuration=source?.source_video.duration_s??0;lastStandardId=null;lastActualId=null;
+    const player=$('#standardPlayer');player.pause();
+    if(source&&source.video_available!==false){player.hidden=false;player.src=`/api/media/${source.source_video.video_id}/content`;}else{player.removeAttribute('src');player.hidden=true;}
+    $('#syncStatus').textContent=source?.video_available===false?'お手本動画が見つかりません。集計と出典は保持しています。':'同じ作業名の区間へ移動します。独立再生も選べます。';
   }
   function restoreSettings(s){$('#processingMode').value=s.processing_mode;$('#inputFps').value=s.fps;$('#audioEnabled').checked=s.audio_enabled;$('#promptRelease').value=s.prompt_release;}
   function modeTabs(){for(const [sel,value]of [['#fewShotTab','few_shot'],['#zeroShotTab','zero_shot']]){const active=mode===value;$(sel).classList.toggle('active',active);$(sel).setAttribute('aria-selected',String(active));}inputState();}
@@ -132,26 +169,39 @@ export function createWorkflow({state,$,render,setStatus,toast,renderDirty,seek,
     }
   }
   async function inspectSet(setId) {
-    const s=await api(`/api/standard-sets/${setId}/inspection`);buildId=setId;const panel=$('#setInspection');
-    panel.innerHTML=`<h3>${esc(s.name)} ／ ${esc(s.status)}</h3><p>語彙 ${esc(s.vocabulary.vocabulary_version)} ／ 標準動画 ${s.source_video.duration_s}秒 ／ 画像 ${s.representative_images.length}枚</p><div class="frame-grid">${s.representative_images.map(i=>`<figure><img src="/api/standard-images/${setId}/${i.image_id}" alt="標準 ${esc(i.segment_id)} ${i.extracted_time_s}秒"><figcaption>${esc(i.segment_id)} ／ ${i.extracted_time_s.toFixed(2)}秒<br>${esc(i.selection_rule_version)}</figcaption></figure>`).join('')}</div><details><summary>生成した標準記述・不足申告を確認</summary><pre>${esc(JSON.stringify(s.examples,null,2))}</pre></details>`;
-    $('#approveSetButton').disabled=s.status!=='preparing';
+    const s=await api(`/api/standard-sets/${setId}/inspection`);inspectedSet=s;buildId=setId;$('#librarySet').value=setId;$('#buildInspectionConfirmed').checked=false;
+    const sources=standardSources(s),panel=$('#setInspection');
+    panel.innerHTML=`<h3>${esc(s.name)} ／ ${esc(setStatusText(s))}</h3><p>お手本 ${sources.length}本 ／ 語彙 ${esc(s.vocabulary.vocabulary_version)} ／ 代表画像 ${s.representative_images.length}枚${s.media_state?.images_missing?`（${s.media_state.images_missing}枚が削除・欠落）`:''}</p>${sources.map(source=>`<details class="set-source-inspection"><summary>${esc(source.name)} · ${source.source_video.duration_s}秒 · ${source.display_segments.length}区間</summary><p class="hint">出典動画ID：${esc(source.source_video.video_id)}<br>SHA-256：${esc(source.source_video.sha256)}</p>${source.video_available===false?'<p>原本動画が見つかりません。記述・出典は残っています。</p>':`<video class="source-player" src="/api/media/${source.source_video.video_id}/content" controls preload="metadata"></video>`}${['unguided','guided'].map(profile=>`<h4>${profile==='unguided'?'案1・3用の記述':'案2用の記述'}</h4>${(s.examples?.[profile]??[]).filter(e=>e.source_id?e.source_id===source.source_id:source.source_video.video_id===s.source_video.video_id).map(e=>`<div class="observation-copy"><strong>${esc(e.label.job_no)} ${esc(e.label.job_title)}</strong><p>${esc(e.observation.operation.value??'観察できませんでした')}</p><p>${e.observation.insufficient_discriminative_features?`要確認：${e.observation.insufficiency_reasons.map(esc).join(' ／ ')}`:'特徴不足の自己申告なし（精度保証ではありません）'}</p><small>出典：${esc(source.name)} ／ 区間 ${esc(e.segment_id)} ／ お手本ID ${esc(e.example_id)}</small><details><summary>すべての観察項目・根拠を確認</summary><pre>${esc(JSON.stringify(e.observation,null,2))}</pre></details></div>`).join('')||'<p>この方式の記述は生成されていません。</p>'}`).join('')}<div class="frame-grid">${s.representative_images.filter(i=>i.source_video_id===source.source_video.video_id).map(i=>`<figure>${i.available===false?'<p>画像は削除・欠落しています</p>':`<img src="/api/standard-images/${setId}/${i.image_id}" alt="${esc(source.name)} ${esc(i.segment_id)} ${i.extracted_time_s}秒">`}<figcaption>${esc(source.name)} ／ ${esc(i.segment_id)} ／ ${i.extracted_time_s.toFixed(2)}秒<br>お手本ID ${esc(i.example_id)}</figcaption></figure>`).join('')}</div></details>`).join('')}`;
+    renderStandardCharts($('#standardAnalytics'),s);
+    $('#approveSetButton').disabled=true;$('#retireSetButton').disabled=s.status!=='ready';
+    $('#approveSetButton').hidden=!s.approval_available;$('#buildInspectionConfirmed').closest('label').hidden=!s.approval_available;$('#setReviewer').closest('label').hidden=!s.approval_available;$('#retireSetButton').hidden=s.status!=='ready';
+    $('.approval-area').hidden=!s.approval_available&&s.status!=='ready';
+    if(s.approval_available)$('#buildEditor').open=false;
   }
+  async function openLibrary() {$('#setManager').hidden=false;if($('#standardSet').value)await inspectSet($('#standardSet').value);$('#setManagerTitle').focus();$('#setManager').scrollIntoView({block:'start'});}
   async function readFile(input){const file=$(input).files[0];if(!file)throw new Error('必要なJSONファイルを選択してください。');return JSON.parse(await file.text());}
   async function initialize() {
-    state.session=await api('/api/session');config=await api('/api/config');$('#modeBadge').textContent=config.mode==='mock'?'LOCAL MOCK｜合成データ・外部通信なし':'GEMINI / GEAP｜実接続・実測未確認';$('#demoInputButton').hidden=config.mode!=='mock';await refreshInputs();await history();inputState();
+    state.session=await api('/api/session');config=await api('/api/config');$('#modeBadge').textContent=config.mode==='mock'?'合成モック · 外部通信なし':'Google Cloud · 業務精度は未検証';$('#demoInputButton').hidden=config.mode!=='mock';await refreshInputs();await history();
+    editor=createStandardEditor({$,api,uploadVideo,getMedia:()=>media,getVocabularies:()=>vocabularies,settings,getConfig:()=>config,getBusy:busy,onBusy:value=>{pendingUploads+=value?1:-1;inputState();},onCreated:async run=>{buildId=run.standard_set_id;localStorage.setItem('tas-active-run',run.run_id);await observe(run.run_id);}});editor.reset();$('.approval-area').hidden=true;$('#pdfDestination').textContent=config.mode==='mock'?'合成モック：PDFはこのPCに保存します。外部通信はありません。':`送信先：Google Cloud / ${config.settings.project} / ${config.settings.location}。標準書PDFを送信して作業名を抽出します。`;inputState();
     $('#rerunStage2').addEventListener('click',safely(()=>start(true)));$('#saveReviewButton').addEventListener('click',safely(()=>persistReview()));$('#refreshHistory').addEventListener('click',safely(history));
-    $('#extractVocabulary').addEventListener('click',safely(async()=>{const file=$('#vocabularyPdf').files[0];if(!file)throw new Error('標準書PDFを選択してください。');const response=await fetch('/api/media',{method:'POST',headers:{'content-type':'application/pdf','x-display-name':encodeURIComponent(file.name),'x-local-token':state.session.token},body:file});const pdf=await response.json();if(!response.ok)throw new Error(pdf.message);const run=await api('/api/vocabulary-extractions',{client_request_id:crypto.randomUUID(),pdf_asset_id:pdf.asset_id,settings:settings(),consent_confirmed:$('#consentConfirmed').checked});await observe(run.run_id);}));
-    $('#approveVocabulary').addEventListener('click',safely(async()=>{const vocabulary=JSON.parse($('#draftVocabulary').value),discriminators=JSON.parse($('#draftDiscriminators').value);discriminators.approved_by=$('#setReviewer').value;discriminators.approved_at=new Date().toISOString();const v=await api(`/api/vocabulary-extractions/${vocabularyRunId}/approve`,{vocabulary,discriminators,approved_by:$('#setReviewer').value});await refreshInputs();$('#buildVocabulary').value=v.ref;$('#vocabularyDraft').hidden=true;await history();toast('標準書の語彙と識別条件を確認済みとして登録しました。');}));
+    $('#extractVocabulary').addEventListener('click',safely(async()=>{if(!$('#pdfConsent').checked)throw new Error('標準書の送信範囲を確認してください。');const file=$('#vocabularyPdf').files[0];if(!file)throw new Error('標準書PDFを選択してください。');const response=await fetch('/api/media',{method:'POST',headers:{'content-type':'application/pdf','x-display-name':encodeURIComponent(file.name),'x-local-token':state.session.token},body:file});const pdf=await response.json();if(!response.ok)throw new Error(pdf.message);const run=await api('/api/vocabulary-extractions',{client_request_id:crypto.randomUUID(),pdf_asset_id:pdf.asset_id,settings:settings(),consent_confirmed:$('#pdfConsent').checked});await observe(run.run_id);}));
+    $('#approveVocabulary').addEventListener('click',safely(async()=>{const vocabulary=JSON.parse($('#draftVocabulary').value),discriminators=JSON.parse($('#draftDiscriminators').value);discriminators.approved_by=$('#setReviewer').value;discriminators.approved_at=new Date().toISOString();const v=await api(`/api/vocabulary-extractions/${vocabularyRunId}/approve`,{vocabulary,discriminators,approved_by:$('#setReviewer').value});await refreshInputs();$('#buildVocabulary').value=v.ref;editor?.refresh();$('#vocabularyDraft').hidden=true;await history();toast('標準書の語彙と識別条件を確認済みとして登録しました。');}));
     $('#fewShotTab').addEventListener('click',()=>{mode='few_shot';modeTabs();});$('#zeroShotTab').addEventListener('click',()=>{mode='zero_shot';modeTabs();});
     for(const sel of ['#standardSet','#registeredVideo','#vocabularySelect','#analysisStrategy','#processingMode','#inputFps','#audioEnabled','#promptRelease','#consentConfirmed'])$(sel).addEventListener('change',inputState);
-    $('#manageSets').addEventListener('click',safely(async()=>{$('#setManager').hidden=false;if($('#standardSet').value)await inspectSet($('#standardSet').value);}));$('#closeSetManager').addEventListener('click',()=>{$('#setManager').hidden=true;});
-    $('#registerVocabulary').addEventListener('click',safely(async()=>{const r=await api('/api/vocabularies',{vocabulary:await readFile('#vocabularyFile'),discriminators:await readFile('#discriminatorFile'),approved_by:$('#setReviewer').value});await refreshInputs();$('#buildVocabulary').value=r.ref;toast('語彙・識別条件を登録しました。');}));
-    $('#buildSetButton').addEventListener('click',safely(async()=>{const gt=await api('/api/standard-set-build-inputs/gt',await readFile('#buildGtFile'));const r=await api('/api/standard-sets',{client_request_id:crypto.randomUUID(),name:$('#setName').value,source_video_id:$('#buildVideo').value,build_gt_asset_id:gt.build_gt_asset_id,vocabulary_ref:$('#buildVocabulary').value,discriminator_ref:$('#buildVocabulary').value,profiles:$('#buildGuided').checked?['unguided','guided']:['unguided'],generate_images:$('#buildImages').checked,settings:settings(),parent_set_id:null,consent_confirmed:$('#consentConfirmed').checked});buildId=r.standard_set_id;await observe(r.run_id);}));
-    $('#approveSetButton').addEventListener('click',safely(async()=>{await api(`/api/standard-sets/${buildId}/approve`,{approved_by:$('#setReviewer').value});await refreshInputs();$('#standardSet').value=buildId;await inspectSet(buildId);await history();inputState();setStatus('done','標準セットを公開しました','実作業動画と方式を選び、同意欄を確認して分析を開始できます。');}));
-    $('#retireSetButton').addEventListener('click',safely(async()=>{await api(`/api/standard-sets/${$('#standardSet').value}/retire`,{});await refreshInputs();toast('セットの新規利用を停止しました。履歴は残ります。');}));
+    $('#manageSets').addEventListener('click',safely(openLibrary));$('#openLibrary').addEventListener('click',safely(openLibrary));$('#closeSetManager').addEventListener('click',()=>{$('#setManager').hidden=true;});
+    $('#registerVocabulary').addEventListener('click',safely(async()=>{const r=await api('/api/vocabularies',{vocabulary:await readFile('#vocabularyFile'),discriminators:await readFile('#discriminatorFile'),approved_by:$('#setReviewer').value});await refreshInputs();$('#buildVocabulary').value=r.ref;editor?.refresh();toast('語彙・識別条件を登録しました。');}));
+    $('#approveSetButton').addEventListener('click',safely(async()=>{if(!inspectedSet?.approval_available||!$('#buildInspectionConfirmed').checked)return;await api(`/api/standard-sets/${buildId}/approve`,{approved_by:$('#setReviewer').value});await refreshInputs();$('#standardSet').value=buildId;await inspectSet(buildId);await history();inputState();setStatus('done','標準セットを公開しました','実作業動画と方式を選び、同意欄を確認して分析を開始できます。');}));
+    $('#retireSetButton').addEventListener('click',safely(async()=>{const setId=$('#librarySet').value;await api(`/api/standard-sets/${setId}/retire`,{});await refreshInputs();await inspectSet(setId);toast('セットの新規利用を停止しました。履歴は残ります。');}));
+    $('#standardSource').addEventListener('change',()=>{chooseResultSource();render();});
+    $('#librarySet').addEventListener('change',safely(async()=>{if($('#librarySet').value){await inspectSet($('#librarySet').value);$('#buildEditor').open=false;}else{$('#setInspection').replaceChildren();$('#standardAnalytics').replaceChildren();$('.approval-area').hidden=true;$('#buildEditor').open=true;}}));
+    $('#buildInspectionConfirmed').addEventListener('change',()=>{$('#approveSetButton').disabled=!inspectedSet?.approval_available||!$('#buildInspectionConfirmed').checked;});
+    $('#newSetDraft').addEventListener('click',()=>{$('#librarySet').value='';$('#setInspection').replaceChildren();$('#standardAnalytics').replaceChildren();$('.approval-area').hidden=true;$('#buildEditor').open=true;editor.refresh();$('#setName').focus();});
+    $('#registeredVideo').addEventListener('change',()=>{$('#videoInput').value='';$('#consentConfirmed').checked=false;inputState();});
+    $('#standardPlayer').addEventListener('error',()=>{$('#standardPlayer').hidden=true;$('#syncStatus').textContent='お手本動画を再生できません。保存状態を確認してください。';});
     $('#standardPlayer').addEventListener('timeupdate',()=>{const t=$('#standardPlayer').currentTime,s=standardSegments.find(s=>s.start_s<=t&&t<s.end_s);if(s&&s.segment_id!==lastStandardId){lastStandardId=s.segment_id;syncFrom('standard',s);}});
     $('#videoPlayer').addEventListener('timeupdate',()=>{if(!result)return;const t=$('#videoPlayer').currentTime,s=exactReviewed().find(s=>s.start_s<=t&&t<s.end_s);if(s&&s.segment_id!==lastActualId){lastActualId=s.segment_id;syncFrom('actual',s);}});
-    const running=localStorage.getItem('tas-active-run');if(running)try{await observe(running);}catch{localStorage.removeItem('tas-active-run');}
+    const params=new URLSearchParams(location.search),running=params.has('new')?null:localStorage.getItem('tas-active-run');if(running)try{restoreObservedInputs=true;await observe(running);}catch{localStorage.removeItem('tas-active-run');}
+    if(location.hash==='#library')await openLibrary();
   }
   return {inputState,selectVideo:safely(selectVideo),demo:safely(demo),start:safely(start),cancel:safely(cancel),download:safely(download),initialize:safely(initialize),extras,warnings,prepareAdd:()=>labelSelector($('#addForm'))};
 }

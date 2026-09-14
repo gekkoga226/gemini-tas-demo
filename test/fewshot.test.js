@@ -7,6 +7,7 @@ import {TasService} from '../src/pipeline.js';
 import {tasConfig,defaultSettings} from '../src/settings.js';
 import {id,delay,sha256} from '../src/core.js';
 import {validateStage1,validateStage2,saveStage2} from '../src/contracts.js';
+import {STAGE2_SCHEMA,STAGE2_SCHEMA_VERSION} from '../src/response-schemas.js';
 
 async function waitRun(service,runId) {for(let n=0;n<1000;n++){const r=await service.status(runId);if(['succeeded','failed','cancelled','interrupted','awaiting_approval'].includes(r.status))return r;await delay(20);}throw new Error('local job timeout');}
 export async function fixture(t) {
@@ -18,6 +19,8 @@ test('Round 18: published assets, six conditions, immutable times, evidence, sha
     const r=await service.createAnalysis({client_request_id:id(),input_video_id:demo.actual_video_id,standard_set_id:demo.standard_set_id,analysis_strategy:strategy,analysis_mode:mode,settings,consent_confirmed:true});const status=await waitRun(service,r.run_id);assert.equal(status.status,'succeeded',JSON.stringify(status.error));const result=await service.result(r.run_id);results.push(result);assert.equal(result.mock,true);assert.equal(result.metrics_runtime.cost.total,null);assert.deepEqual(result.segments.map(s=>[s.segment_id,s.start_s,s.end_s]),result.stage1.output.segments.map(s=>[s.segment_id,s.start_s,s.end_s]));assert.equal(result.segments[2].confidence_raw,.92);assert.equal(result.segments[2].confidence,.49);
   }
   assert.equal(new Set(results.slice(0,4).map(r=>r.stage1.artifact_id)).size,1);assert.notEqual(results[0].stage1.cache_key,results[2].stage1.cache_key);assert.notEqual(results[0].stage1.artifact_id,results[4].stage1.artifact_id);assert.equal(results[4].stage1.artifact_id,results[5].stage1.artifact_id);
+  for(const r of results){assert.deepEqual(r.versions.stage2_schema,{version:STAGE2_SCHEMA_VERSION,sha256:sha256(STAGE2_SCHEMA)});assert.deepEqual(r.execution.stage2.generationConfig.responseSchema,STAGE2_SCHEMA);assert.equal(r.stage2.output.schema_version,'stage2.v1');}
+  await assert.rejects(service.store.version('stage2-response-schema',STAGE2_SCHEMA_VERSION,'changed'),{code:'VERSION_HASH_CONFLICT'});
   const result=results[0],segments=result.segments.map(({segment_id,start_s,end_s,job_no,job_title,page_number})=>({segment_id,start_s,end_s,job_no,job_title,page_number}));const review=await service.saveReview(result.run_id,{editor:'確認者',original_result_sha256:sha256(result),segments});assert.equal(review.original_run_id,result.run_id);assert.deepEqual(review.original_result,result);assert.equal(sha256(review.original_result),review.original_result_sha256);assert.deepEqual(await service.result(result.run_id),result);
   const changed=structuredClone(segments);changed.at(-1).end_s=27;
   changed.push({...segments.at(-1),segment_id:'human-added-test',start_s:27,end_s:30});

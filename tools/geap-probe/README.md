@@ -45,6 +45,8 @@ npm.cmd run probe:self-test
 
 settings_refは `GET /api/config` のsettingsと同じ形式。標準セットのStage1条件と一致させます。`MODEL_REVISION_SCOPE` を検証セッション内で固定してください。確認済みモデルIDに置き換えた上で使用します。
 
+公開標準セットはv1（単一）とv2（複数）を読み込めます。v2は全動画のprofile条件・artifact・画像の出自を検査し、評価動画がどのお手本とも重複しないことを確認します。Check 7の自由記述対照も全お手本を個別に処理し、`standard-freeform.json` の `sources` に出典を残します。複数お手本の実API性能・精度・画像数上限は未実測です。
+
 採点policyの最小例：
 
 ```json

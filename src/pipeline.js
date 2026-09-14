@@ -2,11 +2,11 @@ import fs from 'node:fs/promises';
 import {LocalStore,safeId} from './store.js';
 import {tasConfig,normalizeSettings,defaultSettings} from './settings.js';
 import {id,now,clone,sha256,canonicalJSON,demand,fault,profileFor,STRATEGIES,MODES,TERMINAL,segmentId} from './core.js';
-import {validateVocabulary,validateDiscriminators,validateGT,validateStage1,joinFixed,saveStage2,SAFETY} from './contracts.js';
-import {loadPrompts,buildStage1,buildStage2,stage1Key,compatibleKeys,inputSignature,profileConditions} from './inputs.js';
+import {validateVocabulary,validateDiscriminators,validateGT,standardSourcesInput,validateStage1,joinFixed,saveStage2,SAFETY} from './contracts.js';
+import {loadPrompts,buildStage1,buildStage2,stage1Key,compatibleKeys,inputSignature,profileConditions,EXAMPLE_VIEW_VERSION} from './inputs.js';
 import {MediaTools,hashFile} from './media.js';
 import {GeapAdapter,GcsAdapter,getAccessToken,parseModelOutput} from './geap.js';
-import {VOCABULARY_SCHEMA} from './response-schemas.js';
+import {VOCABULARY_SCHEMA,STAGE2_SCHEMA,STAGE2_SCHEMA_VERSION,STAGE2_EMPTY_EVIDENCE_SCHEMA,STAGE2_EMPTY_EVIDENCE_SCHEMA_VERSION} from './response-schemas.js';
 import {estimateCost,validatePriceTable} from './cost.js';
 import {MockModelAdapter,demoVocabulary,demoDiscriminators} from './mock-model.js';
 import {CleanupLedger} from './cleanup.js';
@@ -53,8 +53,25 @@ export class TasService {
   }
   async getMedia(assetId) {return this.store.read(`media/${safeId(assetId)}/asset.json`);}
   async getSet(setId) {const set=await this.store.read(`standard-sets/${safeId(setId)}/manifest.json`);if(['ready','retired'].includes(set.status)){const published=await this.store.read(`standard-sets/${setId}/published.json`);demand(sha256({...published,content_sha256:null})===published.content_sha256&&sha256({...set,status:'ready'})===sha256(published),'SET_HASH_MISMATCH','公開標準セットの内容が変更されています。',409);}return set;}
-  publicSet(s) {const available=STRATEGIES.filter(a=>s.status==='ready'&&s.description_profiles[profileFor(a)]&&(a!=='visual_evidence'||s.representative_images.length>0));return {schema_version:s.schema_version,standard_set_id:s.standard_set_id,parent_set_id:s.parent_set_id,name:s.name,status:s.status,approved_at:s.approved_at,approved_by:s.approved_by,source_video:s.source_video,vocabulary:s.vocabulary,discriminators:s.discriminators,display_segments:s.display_segments,description_profiles:s.description_profiles,representative_images:s.representative_images.map(({asset_ref,gt_version,gt_process_id,...rest})=>rest),available_strategies:available,provenance:s.provenance};}
-  async sets() {const result=[];for(const k of await this.store.list('standard-sets')){const s=await this.store.read(`standard-sets/${k}/manifest.json`,null);if(s)result.push(this.publicSet(s));}return result;}
+  publicSet(s) {
+    const available=STRATEGIES.filter(a=>s.status==='ready'&&s.description_profiles[profileFor(a)]&&(a!=='visual_evidence'||s.representative_images.length>0));
+    const publicVideo=({asset_ref,...video})=>video;
+    const sources=(s.sources??[{source_id:s.source_video.video_id,name:'お手本動画',source_video:s.source_video,display_segments:s.display_segments,description_profiles:s.description_profiles}]).map(x=>({source_id:x.source_id,name:x.name,source_video:publicVideo(x.source_video),display_segments:x.display_segments,description_profiles:x.description_profiles}));
+    return {schema_version:s.schema_version,standard_set_id:s.standard_set_id,parent_set_id:s.parent_set_id,name:s.name,status:s.status,approved_at:s.approved_at,approved_by:s.approved_by,source_video:publicVideo(s.source_video),sources,vocabulary:s.vocabulary,discriminators:s.discriminators,display_segments:s.display_segments,description_profiles:s.description_profiles,representative_images:s.representative_images.map(({asset_ref,gt_version,gt_process_id,...rest})=>rest),available_strategies:available,provenance:s.provenance};
+  }
+  async setView(s) {
+    const view=this.publicSet(s);
+    for(const source of view.sources){const stored=s.sources?.find(x=>x.source_id===source.source_id)?.source_video??s.source_video;source.video_available=await this.store.exists(stored.asset_ref);}
+    for(const img of view.representative_images)img.available=await this.store.exists(s.representative_images.find(x=>x.image_id===img.image_id).asset_ref);
+    const missing=view.representative_images.filter(x=>!x.available).length;
+    view.media_state={images_total:view.representative_images.length,images_missing:missing,local_originals:'manually_managed'};
+    if(missing)view.available_strategies=view.available_strategies.filter(a=>a!=='visual_evidence');
+    const run=await this.store.read(`runs/${s.provenance.build_run_id}/run.json`,null);
+    view.build_status=run?.status??null;
+    view.approval_available=s.status==='preparing'&&run?.status==='awaiting_approval';
+    return view;
+  }
+  async sets() {const result=[];for(const k of await this.store.list('standard-sets')){const s=await this.store.read(`standard-sets/${k}/manifest.json`,null);if(s)result.push(await this.setView(s));}return result;}
   async mediaList() {const list=[];for(const k of await this.store.list('media')){const a=await this.store.read(`media/${k}/asset.json`,null);if(a){const {asset_ref,...view}=a;list.push(view);}}return list;}
   async registerVocabulary(vocabulary,discriminators,{approved_by,approved_at=now(),extraction=null}={}) {
     validateVocabulary(vocabulary);validateDiscriminators(discriminators,vocabulary);demand(approved_by,'APPROVAL_REQUIRED','語彙と識別条件の確認者を入力してください。');
@@ -70,6 +87,8 @@ export class TasService {
   }
   async newRun(body,kind,snapshot,extra={}) {
     snapshot={...snapshot,price_table:clone(this.config.priceTable??null)};
+    if(kind==='analysis')await this.store.version('stage2-response-schema',STAGE2_SCHEMA_VERSION,sha256(STAGE2_SCHEMA));
+    if(kind==='analysis')await this.store.version('stage2-response-schema',STAGE2_EMPTY_EVIDENCE_SCHEMA_VERSION,sha256(STAGE2_EMPTY_EVIDENCE_SCHEMA));
     if(snapshot.prompt_manifest_sha256){await this.store.version('prompt-release',snapshot.settings.prompt_release,snapshot.prompt_manifest_sha256);const prompts=await loadPrompts(snapshot.settings.prompt_release);for(const [name,p] of Object.entries(prompts.loaded))await this.store.version(`prompt:${name}`,p.version,p.sha256);}
     await this.store.version('safety-policy',snapshot.settings.safety_policy.safety_policy_version,sha256(snapshot.settings.safety_policy));
     demand(typeof body.client_request_id==='string'&&body.client_request_id.length>0&&body.client_request_id.length<=200,'REQUEST_ID_REQUIRED','操作IDが必要です。');
@@ -99,14 +118,35 @@ export class TasService {
     return this.newRun(body,'analysis',snapshot);
   });}
   async createStandard(body) {await this.ready;return this.exclusive(async()=>{
-    demand(body.consent_confirmed===true,'CONSENT_REQUIRED','標準動画の作業者の同意を確認してください。');const settings=normalizeSettings(body.settings,this.config);const prompts=await loadPrompts(settings.prompt_release);
-    const video=await this.getMedia(body.source_video_id);const gt=await this.store.read(`build-inputs/${safeId(body.build_gt_asset_id)}/gt.json`);const v=await this.store.read(`vocabularies/${safeId(body.vocabulary_ref)}/vocabulary.json`);validateGT(gt,video,v.vocabulary);
+    demand(body.consent_confirmed===true,'CONSENT_REQUIRED','すべてのお手本動画の作業者の同意を確認してください。');
+    const inputs=standardSourcesInput(body),multi=Object.hasOwn(body,'sources');
+    const settings=normalizeSettings(body.settings,this.config),prompts=await loadPrompts(settings.prompt_release);
+    const v=await this.store.read(`vocabularies/${safeId(body.vocabulary_ref)}/vocabulary.json`);
+    validateVocabulary(v.vocabulary);validateDiscriminators(v.discriminators,v.vocabulary);
+    if(body.parent_set_id)await this.getSet(body.parent_set_id);
     demand(Array.isArray(body.profiles)&&body.profiles.length>0&&new Set(body.profiles).size===body.profiles.length&&body.profiles.every(p=>['unguided','guided'].includes(p)),'INVALID_PROFILE','標準記述の方式を選択してください。');
-    const setId=id();const snapshot={source_video_id:video.video_id,build_gt_asset_id:body.build_gt_asset_id,vocabulary_ref:body.vocabulary_ref,profiles:body.profiles,generate_images:body.generate_images===true,settings,consent_confirmed:true,prompt_manifest_sha256:prompts.sha256};
+    const sources=[];
+    for(const input of inputs) {
+      const video=await this.getMedia(input.source_video_id);
+      demand(video.mime_type==='video/mp4','INVALID_VIDEO','お手本には登録済みMP4を選択してください。');
+      const gt=await this.store.read(`build-inputs/${safeId(input.build_gt_asset_id)}/gt.json`);
+      validateGT(gt,video,v.vocabulary);
+      demand(!sources.some(s=>s.source_video.sha256===video.sha256),'DUPLICATE_STANDARD_VIDEO','同じ内容の動画が重複しています。別の撮影のお手本を選択してください。');
+      sources.push({source_id:id(),name:input.name??video.display_name,
+        source_video:{video_id:video.video_id,asset_ref:video.asset_ref,sha256:video.sha256,duration_s:video.duration_s,mime_type:video.mime_type},
+        build_only_gt:{asset_ref:`build-inputs/${input.build_gt_asset_id}/gt.json`,sha256:sha256(gt),gt_version:gt.gt_version},
+        description_profiles:{unguided:null,guided:null},display_segments:[],provenance:{tools:null,image_extraction:null,synthetic:video.synthetic===true}});
+    }
+    const setId=id(),first=sources[0];
+    const snapshot={...(multi?{sources:clone(inputs)}:{source_video_id:inputs[0].source_video_id,build_gt_asset_id:inputs[0].build_gt_asset_id}),vocabulary_ref:body.vocabulary_ref,profiles:body.profiles,generate_images:body.generate_images===true,settings,consent_confirmed:true,prompt_manifest_sha256:prompts.sha256};
     const r=await this.newRun(body,'standard_build',snapshot,{standard_set_id:setId});
     if(r.standard_set_id!==setId)return r;
-    const s={schema_version:'standard-set.v1',standard_set_id:setId,parent_set_id:body.parent_set_id??null,name:String(body.name||'標準作業セット').slice(0,200),status:'draft',created_at:now(),approved_at:null,approved_by:null,source_video:{video_id:video.video_id,asset_ref:video.asset_ref,sha256:video.sha256,duration_s:video.duration_s,mime_type:video.mime_type},vocabulary:v.vocabulary,discriminators:v.discriminators,build_only_gt:{asset_ref:`build-inputs/${body.build_gt_asset_id}/gt.json`,sha256:sha256(gt),gt_version:gt.gt_version},description_profiles:{unguided:null,guided:null},examples:{unguided:[],guided:[]},display_segments:[],representative_images:[],provenance:{build_run_id:r.run_id,source_hashes:{video:video.sha256,gt:sha256(gt),vocabulary:sha256(v.vocabulary),discriminators:sha256(v.discriminators)},tools:null,created_at:now(),warnings:[],build_rule_version:'standard-build.v1',synthetic:this.config.mockMode},content_sha256:null};
-    await this.store.write(`standard-sets/${setId}/manifest.json`,s);return r;
+    const set={schema_version:multi?'standard-set.v2':'standard-set.v1',standard_set_id:setId,parent_set_id:body.parent_set_id??null,name:String(body.name||'標準作業セット').slice(0,200),status:'draft',created_at:now(),approved_at:null,approved_by:null,
+      source_video:first.source_video,vocabulary:v.vocabulary,discriminators:v.discriminators,build_only_gt:first.build_only_gt,
+      ...(multi?{sources,inference_view_version:'example-view.v2'}:{}),
+      description_profiles:{unguided:null,guided:null},examples:{unguided:[],guided:[]},display_segments:[],representative_images:[],
+      provenance:{build_run_id:r.run_id,source_hashes:{video:first.source_video.sha256,gt:first.build_only_gt.sha256,vocabulary:sha256(v.vocabulary),discriminators:sha256(v.discriminators)},tools:null,created_at:now(),warnings:[],build_rule_version:multi?'standard-build.v2':'standard-build.v1',synthetic:this.config.mockMode},content_sha256:null};
+    await this.store.write(`standard-sets/${setId}/manifest.json`,set);return r;
   });}
   async resolveArtifact(snapshot,prompts) {
     const artifact=await this.store.read(`stage1-artifacts/${safeId(snapshot.stage1_artifact_id)}/artifact.json`);const checksum=await this.store.read(`stage1-artifacts/${snapshot.stage1_artifact_id}/checksum.json`);
@@ -171,7 +211,7 @@ export class TasService {
     await this.phase(r,'validating');let start=Date.now();const saved=saveStage2(res.output,built.input,s.settings.safety_policy);r.metrics.validation+=Date.now()-start;
     const segments=artifact.output.segments.map(seg=>{const l=saved.output.labels.find(l=>l.segment_id===seg.segment_id),v=s.vocabulary.labels.find(v=>v.job_no===l.final_label.job_no);const {final_label,...fields}=l;return {...seg,...fields,...final_label,page_number:v.page_number};});
     await this.phase(r,'persisting');start=Date.now();
-    const result={schema_version:'tas-result.v1',run_id:r.run_id,parent_run_id:r.parent_run_id,comparison_session_id:r.comparison_session_id,analysis_strategy:s.analysis_strategy,analysis_mode:s.analysis_mode,mock:this.config.mockMode,data_origin:this.config.mockMode?'synthetic_mock':'geap_inference',accuracy_claim:null,eligibility:'unverified',input:{video_id:s.video.video_id,source_sha256:s.video.sha256,submitted_sha256:artifact.video.sha256,duration_s:artifact.video.duration_s,preprocess_version:artifact.video.preprocess_version,transform:artifact.video.transform,synthetic_video:s.video.synthetic},standard_set_id:s.standard_set_id,examples_used:s.analysis_mode==='few_shot',versions:{vocabulary:{version:s.vocabulary.vocabulary_version,sha256:sha256(s.vocabulary)},discriminators:{version:s.discriminators.discriminator_version,sha256:sha256(s.discriminators)},non_work_labels:{version:s.vocabulary.non_work_labels_version,sha256:sha256(s.vocabulary.labels.filter(l=>l.kind==='non_work'))},observation:{version:'observation.v1',sha256:prompts.observation_sha256},stage1_prompt:{version:artifact.key_fields.stage1_prompt_version,sha256:artifact.key_fields.stage1_prompt_sha256},stage2_prompt:{version:built.prompt.version,sha256:built.prompt.sha256},stage1_schema:{version:'stage1.discover.v1',sha256:artifact.key_fields.response_schema_sha256},stage2_schema:{version:'stage2.v1',sha256:sha256(built.schema)},safety_policy:{version:s.settings.safety_policy.safety_policy_version,sha256:sha256(s.settings.safety_policy)},quality_policy:{version:'quality-policy.v1',sha256:sha256(await fs.readFile(new URL('../public/segments.js',import.meta.url),'utf8'))},standard_images:{version:images.length?'uniform3.v1/jpeg768.v1':null,sha256:images.length?sha256(images.map(i=>({image_id:i.image_id,sha256:i.sha256}))):null,reason:images.length?null:'not_used_in_this_condition'},prompt_manifest:{version:s.settings.prompt_release,sha256:prompts.sha256}},execution:{...s.settings,stage1:{model_id:s.settings.stage1_model,modelVersion:artifact.execution.modelVersion,agentic_traces:artifact.execution.agentic_traces,agentic_status:this.config.mockMode?'synthetic_not_measured':artifact.execution.agentic_traces.length?'confirmed':'agentic_unconfirmed',generationConfig:buildStage1({video:{...artifact.video,uri:'mock://metadata/video'},settings:s.settings,prompts,profile:profileFor(s.analysis_strategy),vocabulary:s.vocabulary,discriminators:s.discriminators}).body.generationConfig},stage2:{model_id:s.settings.stage2_model,modelVersion:res.model_version,agentic_traces:res.agentic_traces,agentic_status:s.analysis_strategy==='visual_evidence'?(this.config.mockMode?'synthetic_not_measured':res.agentic_traces.length?'confirmed':'agentic_unconfirmed'):'not_applicable',generationConfig:built.body.generationConfig},server_location:'local',auth_method:this.config.mockMode?'none':this.config.authMode,principal:this.config.mockMode?null:this.config.principal,app_version:this.config.appVersion},stage1:r.stage1,stage2:{input_sha256:sha256(built.body),output:saved.output,standard_image_ids:images.map(i=>i.image_id),evidence_condition:built.evidence_condition},segments,warnings:saved.warnings,metrics_runtime:{elapsed_ms:r.metrics,attempt_usage:r.attempts.map(a=>({attempt_id:a.attempt_id,stage:a.stage,usageMetadata:a.usageMetadata,synthetic:a.usage_is_synthetic})),countTokens:null,cost:{total:null,status:'unknown',cost_status:'unknown',currency:null,price_table:null,formula:null,reason:this.config.mockMode?'疑似使用量。実費・精度は未測定。':'料金表または費用内訳が未設定。',actual_spend:null,standalone_attribution:null}},status:'succeeded',error:null,cleanup:await this.cleanup.summary(r.run_id),created_at:r.created_at,started_at:r.started_at,finished_at:now(),attempts:r.attempts};
+    const result={schema_version:'tas-result.v1',run_id:r.run_id,parent_run_id:r.parent_run_id,comparison_session_id:r.comparison_session_id,analysis_strategy:s.analysis_strategy,analysis_mode:s.analysis_mode,mock:this.config.mockMode,data_origin:this.config.mockMode?'synthetic_mock':'geap_inference',accuracy_claim:null,eligibility:'unverified',input:{video_id:s.video.video_id,source_sha256:s.video.sha256,submitted_sha256:artifact.video.sha256,duration_s:artifact.video.duration_s,preprocess_version:artifact.video.preprocess_version,transform:artifact.video.transform,synthetic_video:s.video.synthetic},standard_set_id:s.standard_set_id,examples_used:s.analysis_mode==='few_shot',versions:{example_view:{version:EXAMPLE_VIEW_VERSION,sha256:sha256(built.input.examples)},vocabulary:{version:s.vocabulary.vocabulary_version,sha256:sha256(s.vocabulary)},discriminators:{version:s.discriminators.discriminator_version,sha256:sha256(s.discriminators)},non_work_labels:{version:s.vocabulary.non_work_labels_version,sha256:sha256(s.vocabulary.labels.filter(l=>l.kind==='non_work'))},observation:{version:'observation.v1',sha256:prompts.observation_sha256},stage1_prompt:{version:artifact.key_fields.stage1_prompt_version,sha256:artifact.key_fields.stage1_prompt_sha256},stage2_prompt:{version:built.prompt.version,sha256:built.prompt.sha256},stage1_schema:{version:'stage1.discover.v1',sha256:artifact.key_fields.response_schema_sha256},stage2_schema:{version:built.schema_version,sha256:sha256(built.schema)},safety_policy:{version:s.settings.safety_policy.safety_policy_version,sha256:sha256(s.settings.safety_policy)},quality_policy:{version:'quality-policy.v1',sha256:sha256(await fs.readFile(new URL('../public/segments.js',import.meta.url),'utf8'))},standard_images:{version:images.length?'uniform3.v1/jpeg768.v1':null,sha256:images.length?sha256(images.map(i=>({image_id:i.image_id,sha256:i.sha256}))):null,reason:images.length?null:'not_used_in_this_condition'},prompt_manifest:{version:s.settings.prompt_release,sha256:prompts.sha256}},execution:{...s.settings,stage1:{model_id:s.settings.stage1_model,modelVersion:artifact.execution.modelVersion,agentic_traces:artifact.execution.agentic_traces,agentic_status:this.config.mockMode?'synthetic_not_measured':artifact.execution.agentic_traces.length?'confirmed':'agentic_unconfirmed',generationConfig:buildStage1({video:{...artifact.video,uri:'mock://metadata/video'},settings:s.settings,prompts,profile:profileFor(s.analysis_strategy),vocabulary:s.vocabulary,discriminators:s.discriminators}).body.generationConfig},stage2:{model_id:s.settings.stage2_model,modelVersion:res.model_version,agentic_traces:res.agentic_traces,agentic_status:s.analysis_strategy==='visual_evidence'?(this.config.mockMode?'synthetic_not_measured':res.agentic_traces.length?'confirmed':'agentic_unconfirmed'):'not_applicable',generationConfig:built.body.generationConfig},server_location:'local',auth_method:this.config.mockMode?'none':this.config.authMode,principal:this.config.mockMode?null:this.config.principal,app_version:this.config.appVersion},stage1:r.stage1,stage2:{input_sha256:sha256(built.body),output:saved.output,standard_image_ids:images.map(i=>i.image_id),evidence_condition:built.evidence_condition},segments,warnings:saved.warnings,metrics_runtime:{elapsed_ms:clone(r.metrics),attempt_usage:r.attempts.map(a=>({attempt_id:a.attempt_id,stage:a.stage,usageMetadata:a.usageMetadata,synthetic:a.usage_is_synthetic})),countTokens:null,cost:{total:null,status:'unknown',cost_status:'unknown',currency:null,price_table:null,formula:null,reason:this.config.mockMode?'疑似使用量。実費・精度は未測定。':'料金表または費用内訳が未設定。',actual_spend:null,standalone_attribution:null}},status:'succeeded',error:null,cleanup:await this.cleanup.summary(r.run_id),created_at:r.created_at,started_at:r.started_at,finished_at:now(),attempts:r.attempts};
     const attributedStage1=r.stage1.reused?(await this.store.read(`runs/${artifact.producer_run_id}/run.json`)).attempts.filter(a=>a.stage==='stage1'):[];
     result.metrics_runtime.cost=estimateCost(r.attempts,s.price_table,{mock:this.config.mockMode,attributedStage1});
     result.metrics_runtime.sent_media_bytes={stage1:r.stage1.reused?0:video.size_bytes??s.video.size_bytes,stage2:s.analysis_strategy==='visual_evidence'?(video.size_bytes??s.video.size_bytes)+images.reduce((n,i)=>n+(i.size_bytes||0),0):0};
@@ -179,36 +219,58 @@ export class TasService {
   }
   async processStandard(r) {
     const s=r.snapshot,set=await this.getSet(r.standard_set_id),prompts=await loadPrompts(s.settings.prompt_release);
-    const video=await this.getMedia(s.source_video_id),originalGT=await this.store.read(`build-inputs/${safeId(s.build_gt_asset_id)}/gt.json`);
-    validateGT(originalGT,video,set.vocabulary);set.status='preparing';await this.store.write(`standard-sets/${set.standard_set_id}/manifest.json`,set);
-    const gt={...originalGT,segments:originalGT.segments.map((seg,i)=>({...seg,segment_id:segmentId(i)}))};
-    const boundaries=gt.segments.map(({segment_id,start_s,end_s})=>({segment_id,start_s,end_s}));
-    const start=Date.now(),prepared=await this.media.prepare(video,s.settings,r.run_id,this.cleanup,this.controller.signal);r.metrics.preparation+=Date.now()-start;
-    await this.phase(r,'uploading');demand(s.consent_confirmed,'CONSENT_REQUIRED','標準動画の同意を確認してください。');const remote=await this.cleanup.upload(prepared,r.run_id,null,this.controller.signal);
-    const exampleIds=Object.fromEntries(boundaries.map(b=>[b.segment_id,id()]));
-    for(const profile of s.profiles) {
-      await this.phase(r,'stage1_running',{profile,boundary_mode:'fixed'});
-      const built=buildStage1({video:remote,settings:s.settings,prompts,profile,boundaries,vocabulary:set.vocabulary,discriminators:set.discriminators});
-      const res=await this.attemptStage(r,'stage1',built,{video:remote,boundaries});validateStage1(res.output,{duration_s:video.duration_s,audio_enabled:s.settings.audio_enabled,boundaries});
-      const artifactId=id();const artifact={artifact_id:artifactId,stage1_profile:profile,boundary_mode:'fixed',output:res.output,boundary_manifest_sha256:sha256(boundaries),request_sha256:sha256(built.body),input_signature_sha256:inputSignature(built.body,[remote]),raw_response_ref:r.attempts.at(-1).response_ref,raw_response_sha256:r.attempts.at(-1).response_sha256,execution:{settings:s.settings,modelVersion:res.model_version,agentic_traces:res.agentic_traces},usage:res.usage,created_at:now()};
-      await this.store.immutable(`stage1-artifacts/${artifactId}/artifact.json`,artifact);await this.store.immutable(`stage1-artifacts/${artifactId}/checksum.json`,{sha256:sha256(artifact)});
-      set.description_profiles[profile]={artifact_id:artifactId,artifact_sha256:sha256(artifact),observation_version:'observation.v1',conditions:profileConditions(s.settings,prompts,profile),validation_status:'valid',modelVersion:res.model_version};
-      set.examples[profile]=joinFixed(res.output,boundaries).map(x=>{const g=gt.segments.find(g=>g.segment_id===x.segment_id);return {example_id:exampleIds[x.segment_id],segment_id:x.segment_id,label:{job_no:g.job_no,job_title:g.job_title},observation:x.observation};});
+    demand(prompts.sha256===s.prompt_manifest_sha256,'VERSION_HASH_CONFLICT','受付後にプロンプト構成が変更されました。',409);
+    const sources=set.sources??[{source_id:null,source_video:set.source_video,build_only_gt:set.build_only_gt,description_profiles:set.description_profiles,display_segments:[],provenance:{}}];
+    set.status='preparing';await this.store.write(`standard-sets/${set.standard_set_id}/manifest.json`,set);
+    for(const [sourceIndex,source] of sources.entries()) {
+      const video=await this.getMedia(source.source_video.video_id),originalGT=await this.store.read(source.build_only_gt.asset_ref);
+      demand(video.sha256===source.source_video.sha256&&sha256(originalGT)===source.build_only_gt.sha256,'SOURCE_HASH_MISMATCH','受付後にお手本の原本が変わっています。');
+      validateGT(originalGT,video,set.vocabulary);
+      const gt={...originalGT,segments:originalGT.segments.map((seg,i)=>({...seg,segment_id:segmentId(i)}))};
+      const boundaries=gt.segments.map(({segment_id,start_s,end_s})=>({segment_id,start_s,end_s}));
+      const detail={source_id:source.source_id,source_index:sourceIndex+1,source_count:sources.length};
+      await this.phase(r,'preparing',detail);
+      const start=Date.now(),prepared=await this.media.prepare(video,s.settings,r.run_id,this.cleanup,this.controller.signal);r.metrics.preparation+=Date.now()-start;
+      await this.phase(r,'uploading',detail);demand(s.consent_confirmed,'CONSENT_REQUIRED','標準動画の同意を確認してください。');
+      const remote=await this.cleanup.upload(prepared,r.run_id,null,this.controller.signal);
+      const exampleIds=Object.fromEntries(boundaries.map(b=>[b.segment_id,id()]));
+      for(const profile of s.profiles) {
+        await this.phase(r,'stage1_running',{...detail,profile,boundary_mode:'fixed'});
+        const built=buildStage1({video:remote,settings:s.settings,prompts,profile,boundaries,vocabulary:set.vocabulary,discriminators:set.discriminators});
+        const res=await this.attemptStage(r,'stage1',built,{video:remote,boundaries});validateStage1(res.output,{duration_s:video.duration_s,audio_enabled:s.settings.audio_enabled,boundaries});
+        const artifactId=id(),origin=source.source_id?{source_id:source.source_id,source_video_id:video.video_id}:{};
+        const artifact={artifact_id:artifactId,...origin,stage1_profile:profile,boundary_mode:'fixed',output:res.output,boundary_manifest_sha256:sha256(boundaries),request_sha256:sha256(built.body),input_signature_sha256:inputSignature(built.body,[remote]),raw_response_ref:r.attempts.at(-1).response_ref,raw_response_sha256:r.attempts.at(-1).response_sha256,execution:{settings:s.settings,modelVersion:res.model_version,agentic_traces:res.agentic_traces},usage:res.usage,created_at:now()};
+        await this.store.immutable(`stage1-artifacts/${artifactId}/artifact.json`,artifact);await this.store.immutable(`stage1-artifacts/${artifactId}/checksum.json`,{sha256:sha256(artifact)});
+        source.description_profiles[profile]={artifact_id:artifactId,artifact_sha256:sha256(artifact),observation_version:'observation.v1',conditions:profileConditions(s.settings,prompts,profile),validation_status:'valid',modelVersion:res.model_version};
+        set.examples[profile].push(...joinFixed(res.output,boundaries).map(x=>{const g=gt.segments.find(g=>g.segment_id===x.segment_id);return {example_id:exampleIds[x.segment_id],...origin,segment_id:x.segment_id,label:{job_no:g.job_no,job_title:g.job_title},observation:x.observation};}));
+      }
+      source.display_segments=gt.segments.map(({segment_id,start_s,end_s,job_no,job_title})=>({segment_id,start_s,end_s,job_no,job_title}));
+      if(s.generate_images) {
+        await this.phase(r,'preparing',{...detail,operation:'representative_images'});
+        const frames=await this.media.extractFrames({asset:video,gt,setId:set.standard_set_id,sourceId:source.source_id,exampleIds,signal:this.controller.signal});
+        set.representative_images.push(...frames.images.map(img=>({...img,...(source.source_id?{source_id:source.source_id}:{})})));
+        source.provenance.tools=frames.tools;source.provenance.image_extraction=frames.settings;
+      }
+      // Persist each video's assets before releasing its leases. Failure retains all prior artifacts.
+      if(set.sources)for(const profile of s.profiles) {
+        const complete=sources.filter(x=>x.description_profiles[profile]);
+        set.description_profiles[profile]={...complete[0].description_profiles[profile],artifacts:complete.map(x=>({source_id:x.source_id,...x.description_profiles[profile]}))};
+      }
+      set.display_segments=sources[0].display_segments;
+      set.provenance.tools=sources[0].provenance.tools??null;set.provenance.image_extraction=sources[0].provenance.image_extraction??null;
+      await this.store.write(`standard-sets/${set.standard_set_id}/manifest.json`,set);
+      await this.cleanup.releaseRun(r.run_id);await this.cleanup.sweep();
     }
-    set.display_segments=gt.segments.map(({segment_id,start_s,end_s,job_no,job_title})=>({segment_id,start_s,end_s,job_no,job_title}));
-    if(s.generate_images) {
-      await this.phase(r,'preparing',{operation:'representative_images'});
-      const frames=await this.media.extractFrames({asset:video,gt,setId:set.standard_set_id,exampleIds,signal:this.controller.signal});set.representative_images=frames.images;set.provenance.tools=frames.tools;set.provenance.image_extraction=frames.settings;
-    }
-    await this.phase(r,'validating');demand(Object.values(set.description_profiles).some(Boolean),'INVALID_SET','有効な標準記述が必要です。');
-    set.provenance.warnings=Object.values(set.examples).flat().filter(e=>e.observation.insufficient_discriminative_features).map(e=>({code:'STANDARD_INSUFFICIENT',example_id:e.example_id}));
+    await this.phase(r,'validating');
+    demand(sources.every(x=>s.profiles.every(p=>x.description_profiles[p]?.validation_status==='valid')),'INVALID_SET','すべてのお手本の記述が必要です。');
+    set.provenance.warnings=Object.values(set.examples).flat().filter(e=>e.observation.insufficient_discriminative_features).map(e=>({code:'STANDARD_INSUFFICIENT',example_id:e.example_id,...(e.source_id?{source_id:e.source_id}:{})}));
     await this.store.write(`standard-sets/${set.standard_set_id}/manifest.json`,set);
-    await this.phase(r,'awaiting_approval');await this.cleanup.releaseRun(r.run_id);await this.cleanup.sweep();
+    await this.phase(r,'awaiting_approval');
   }
   async approve(setId,reviewer) {await this.ready;return this.exclusive(async()=>{
     demand(typeof reviewer==='string'&&reviewer.trim().length>0,'REVIEWER_REQUIRED','確認者を入力してください。');const set=await this.getSet(setId);const r=await this.store.read(`runs/${set.provenance.build_run_id}/run.json`);
     demand(r.status==='awaiting_approval'&&set.status==='preparing','NOT_AWAITING_APPROVAL','承認待ちのセットを指定してください。',409);
-    for(const p of Object.values(set.description_profiles).filter(Boolean)){const a=await this.store.read(`stage1-artifacts/${p.artifact_id}/artifact.json`);demand(sha256(a)===p.artifact_sha256,'INVALID_ARTIFACT','標準記述のハッシュ不一致');}
+    for(const p of Object.values(set.description_profiles).filter(Boolean).flatMap(p=>p.artifacts??[p])){const a=await this.store.read(`stage1-artifacts/${p.artifact_id}/artifact.json`);demand(sha256(a)===p.artifact_sha256,'INVALID_ARTIFACT','標準記述のハッシュ不一致');}
     for(const img of set.representative_images)demand(await hashFile(this.store.resolve(img.asset_ref))===img.sha256,'INVALID_IMAGE','標準画像のハッシュ不一致');
     set.status='ready';set.approved_by=reviewer.trim();set.approved_at=now();set.content_sha256=sha256({...set,content_sha256:null});await this.store.immutable(`standard-sets/${setId}/published.json`,set);await this.store.write(`standard-sets/${setId}/manifest.json`,set);
     r.status='succeeded';r.finished_at=now();r.phase_history.push({phase:'approved',at:now(),detail:{approved_by:set.approved_by}});await this.saveRun(r);return this.publicSet(set);
@@ -247,11 +309,11 @@ export class TasService {
     })();
     try{await this.worker;}finally{this.worker=null;}
   }
-  async status(runId) {await this.ready;const r=await this.store.read(`runs/${safeId(runId)}/run.json`);return {run_id:r.run_id,parent_run_id:r.parent_run_id,comparison_session_id:r.comparison_session_id,job_kind:r.job_kind,standard_set_id:r.standard_set_id??r.snapshot.standard_set_id??null,status:r.status,phase:r.phase,revision:r.revision,created_at:r.created_at,started_at:r.started_at,finished_at:r.finished_at,settings:r.snapshot.settings,analysis_strategy:r.snapshot.analysis_strategy??null,analysis_mode:r.snapshot.analysis_mode??null,input_video_id:r.snapshot.input_video_id??r.snapshot.source_video_id,error:r.error,stage1:r.stage1?{...r.stage1,output:undefined}:null,result_available:Boolean(r.result_sha256),result_sha256:r.result_sha256??null,cleanup:await this.cleanup.summary(r.run_id),remote_outcome_unknown:r.remote_outcome_unknown,phase_history:r.phase_history,cost:r.result_sha256?(await this.result(runId)).metrics_runtime.cost:{total:null,status:'unknown'},mock:this.config.mockMode};}
+  async status(runId) {await this.ready;const r=await this.store.read(`runs/${safeId(runId)}/run.json`);return {run_id:r.run_id,parent_run_id:r.parent_run_id,comparison_session_id:r.comparison_session_id,job_kind:r.job_kind,standard_set_id:r.standard_set_id??r.snapshot.standard_set_id??null,status:r.status,phase:r.phase,revision:r.revision,created_at:r.created_at,started_at:r.started_at,finished_at:r.finished_at,settings:r.snapshot.settings,analysis_strategy:r.snapshot.analysis_strategy??null,analysis_mode:r.snapshot.analysis_mode??null,input_video_id:r.snapshot.input_video_id??r.snapshot.source_video_id??r.snapshot.sources?.[0]?.source_video_id,source_count:r.snapshot.sources?.length??(r.job_kind==='standard_build'?1:null),error:r.error,stage1:r.stage1?{...r.stage1,output:undefined}:null,result_available:Boolean(r.result_sha256),result_sha256:r.result_sha256??null,cleanup:await this.cleanup.summary(r.run_id),remote_outcome_unknown:r.remote_outcome_unknown,phase_history:r.phase_history,cost:r.result_sha256?(await this.result(runId)).metrics_runtime.cost:{total:null,status:'unknown'},mock:this.config.mockMode};}
   async history() {await this.ready;const list=[];for(const k of await this.store.list('runs')){const status=await this.status(k);if(status.result_available){const result=await this.result(k);status.review_count=result.segments.filter(s=>s.review_required).length;}else status.review_count=null;list.push(status);}return list.sort((a,b)=>b.created_at.localeCompare(a.created_at));}
   async result(runId) {const ref=`runs/${safeId(runId)}/result.json`;demand(await this.store.exists(ref),'RESULT_NOT_READY','結果はまだ保存されていません。',409);return this.store.read(ref);}
   async cancel(runId) {await this.ready;return this.exclusive(async()=>{const r=await this.store.read(`runs/${safeId(runId)}/run.json`);if(TERMINAL.includes(r.status))return this.status(runId);r.cancel_requested=true;r.status=['queued','awaiting_approval'].includes(r.status)?'cancelled':'cancel_requested';r.phase_history.push({phase:'cancel_requested',at:now(),detail:null});if(r.status==='cancelled')r.finished_at=now();await this.saveRun(r);if(this.controller&&this.activeRunId===runId)this.controller.abort(fault('CANCELLED','利用者が中断しました。'));return this.status(runId);});}
-  async retry(runId,clientRequestId) {await this.ready;const r=await this.store.read(`runs/${safeId(runId)}/run.json`);demand(TERMINAL.includes(r.status),'RUN_ACTIVE','実行終了後に再試行してください。',409);if(r.job_kind==='vocabulary_extract')return this.createVocabularyExtraction({client_request_id:clientRequestId,pdf_asset_id:r.snapshot.pdf.asset_id,settings:r.snapshot.settings,consent_confirmed:r.snapshot.consent_confirmed});if(r.job_kind==='safety_rederive')return this.rederiveSafety(r.snapshot.source_run_id,{client_request_id:clientRequestId,safety_policy:r.snapshot.settings.safety_policy});if(r.job_kind==='standard_build')return this.createStandard({...r.snapshot,client_request_id:clientRequestId,parent_run_id:runId,name:(await this.getSet(r.standard_set_id)).name,source_video_id:r.snapshot.source_video_id,parent_set_id:r.standard_set_id});const s=r.snapshot;return this.createAnalysis({client_request_id:clientRequestId,input_video_id:s.input_video_id,vocabulary_ref:s.vocabulary_ref??null,standard_set_id:s.standard_set_id,analysis_mode:s.analysis_mode,analysis_strategy:s.analysis_strategy,settings:s.settings,stage1_artifact_id:r.stage1?.artifact_id??null,parent_run_id:runId,consent_confirmed:s.consent_confirmed});}
+  async retry(runId,clientRequestId) {await this.ready;const r=await this.store.read(`runs/${safeId(runId)}/run.json`);demand(TERMINAL.includes(r.status),'RUN_ACTIVE','実行終了後に再試行してください。',409);if(r.job_kind==='vocabulary_extract')return this.createVocabularyExtraction({client_request_id:clientRequestId,pdf_asset_id:r.snapshot.pdf.asset_id,settings:r.snapshot.settings,consent_confirmed:r.snapshot.consent_confirmed});if(r.job_kind==='safety_rederive')return this.rederiveSafety(r.snapshot.source_run_id,{client_request_id:clientRequestId,safety_policy:r.snapshot.settings.safety_policy});if(r.job_kind==='standard_build')return this.createStandard({...r.snapshot,client_request_id:clientRequestId,parent_run_id:runId,name:(await this.getSet(r.standard_set_id)).name,parent_set_id:r.standard_set_id});const s=r.snapshot;return this.createAnalysis({client_request_id:clientRequestId,input_video_id:s.input_video_id,vocabulary_ref:s.vocabulary_ref??null,standard_set_id:s.standard_set_id,analysis_mode:s.analysis_mode,analysis_strategy:s.analysis_strategy,settings:s.settings,stage1_artifact_id:r.stage1?.artifact_id??null,parent_run_id:runId,consent_confirmed:s.consent_confirmed});}
   async reviews(runId) {const result=[];for(const k of await this.store.list(`runs/${safeId(runId)}/reviews`)){const v=await this.store.read(`runs/${runId}/reviews/${k}/review.json`,null);if(v)result.push(v);}return result.sort((a,b)=>a.created_at.localeCompare(b.created_at));}
   async migrateArtifact(body) {await this.ready;return this.exclusive(async()=>{
     demand(body.reason?.trim()&&body.editor?.trim(),'MIGRATION_REASON_REQUIRED','移行理由と確認者が必要です。');

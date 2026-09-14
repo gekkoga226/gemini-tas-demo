@@ -1,9 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {GeapAdapter,GcsAdapter} from '../src/geap.js';
+import {tasConfig} from '../src/settings.js';
 const config={approvedReal:true,bucket:'test-bucket',timeoutMs:100};
 const settings={project:'test',location:'test',host:'https://example.invalid',stage1_model:'explicit-model',stage2_model:'explicit-model',api_version:'v1beta1'};
 const response=(status,payload)=>new Response(JSON.stringify(payload),{status,headers:{'content-type':'application/json'}});
+
+test('global endpoint uses the non-regional host and explicit host overrides remain authoritative',()=>{
+  assert.equal(tasConfig({GEAP_LOCATION:'global'}).host,'https://aiplatform.googleapis.com');
+  assert.equal(tasConfig({GEAP_LOCATION:'us-central1'}).host,'https://us-central1-aiplatform.googleapis.com');
+  assert.equal(tasConfig({GEAP_LOCATION:'global',GEAP_HOST:'https://example.invalid'}).host,'https://example.invalid');
+  assert.equal(tasConfig({}).host,null);
+});
 test('429/5xx retry budget is two and honors Retry-After without sleeping in unit tests',async()=>{const waits=[];let calls=0;const a=new GeapAdapter(config,{tokenProvider:async()=>'',waitImpl:async ms=>waits.push(ms),fetchImpl:async()=>{calls++;return new Response('{}',{status:calls===1?429:500,headers:{'Retry-After':'7'}});}});await assert.rejects(a.call({settings,stage:'stage1',body:{}}),{code:'GEAP_HTTP_500'});assert.equal(calls,3);assert.deepEqual(waits,[7000,20000]);});
 test('GEAP refreshes 401 once, records attempts, keeps Part schema and v1beta1 without mock fallback',async()=>{
   let calls=0,tokens=0;const logs=[];const a=new GeapAdapter(config,{tokenProvider:async()=>`ephemeral-${++tokens}`,fetchImpl:async(url,opts)=>{assert.ok(url.includes('/v1beta1/'));assert.equal(opts.headers.authorization,`Bearer ephemeral-${tokens}`);return ++calls===1?response(401,{}):response(200,{candidates:[{finishReason:'STOP',content:{parts:[{text:'{"ok":true}'}]}}],modelVersion:'reported-version',usageMetadata:{promptTokenCount:17}});}});

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ja">
+<head>
+ <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+ <meta name="description" content="一人称作業動画を見ながら、作業区間と標準の違いを確認するローカル検証モック">
+ <title>作業みえる | 動画から現場を知る</title>
+ <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+ <a class="skip" href="#workspace">作業画面へ</a>
+ <aside class="rail">
+  <div class="brand"><span class="brand-icon" aria-hidden="true">▥</span><span>作業みえる<small>WORK OBSERVATION</small></span></div>
+  <div class="rail-label">作業を確認する</div>
+  <nav aria-label="作業画面"><button class="nav-item active" data-view="workspace"><span aria-hidden="true">01</span>動画と作業区間</button><button class="nav-item" data-view="compare"><span aria-hidden="true">02</span>標準との比較</button><button class="nav-item" data-view="analytics"><span aria-hidden="true">03</span>時間の分析</button><button class="nav-item" data-view="sop"><span aria-hidden="true">04</span>実施手順書</button></nav>
+  <div class="rail-bottom"><span class="local-tag">ローカル検証モック</span><p>動画はこのブラウザで開きます。外部へ送信しません。</p><button class="text-button" id="helpButton">使い方・結果の見方</button></div>
+ </aside>
+ <main>
+  <header class="topbar"><div><div class="eyebrow">作業分析 / 工程A</div><h1 id="viewTitle">動画と作業区間</h1></div><div class="top-actions"><button id="importButton" class="button secondary">結果JSONを読込</button><button id="exportButton" class="button secondary">結果を保存</button><button id="csvButton" class="button secondary">CSV出力</button></div></header>
+  <section class="input-bar" aria-label="動画の選択"><div class="video-info"><span class="file-icon" aria-hidden="true">▷</span><div><span id="fileName">工程A・サンプル動画</span><small id="fileMeta">動画未選択 / 操作用の架空データ・120分</small></div></div><div class="input-actions"><button id="videoButton" class="button primary">対象動画を選ぶ</button><button id="referenceButton" class="button secondary">見本動画を選ぶ</button><button id="sampleButton" class="button secondary">操作用サンプルを表示</button></div><div id="referenceInfo" class="reference-info" hidden></div></section>
+  <input id="videoInput" type="file" accept="video/*,.mp4,.webm,.mov" hidden><input id="referenceInput" type="file" accept="video/*,.mp4,.webm,.mov" hidden><input id="resultInput" type="file" accept="application/json,.json" hidden>
+  <div class="notice" id="dataNotice" role="status">操作用サンプルを表示中です。実際の動画を分析した結果ではありません。</div>
+  <div class="mode-line"><div class="mode-switch" role="group" aria-label="分析方式"><button id="zeroMode" data-mode="zero" aria-pressed="true">見本なし <span>Zero-shot</span></button><button id="fewMode" data-mode="few" aria-pressed="false">見本あり <span>Few-shot</span></button></div><p id="modeDescription">動画の観察と標準書から、作業の候補を確認します。</p><span id="dirtyTag" hidden>変更あり・未保存</span></div>
+  <section class="metrics" id="metrics" aria-label="分析の概要"></section>
+  <section id="workspace" class="view">
+   <div class="work-grid">
+    <div class="video-column"><div class="panel player-panel"><div class="panel-heading"><h2>動画で確認</h2><span id="playerSource">操作用の時間軸</span></div><div class="video-stage"><video id="player" controls playsinline preload="metadata" hidden></video><div id="videoEmpty"><span class="empty-play" aria-hidden="true">▷</span><h3>手元の動画をここに</h3><p>対象動画を選ぶと再生できます。<br>区間を選んで、作業の始まりへ移動します。</p><button id="videoEmptyButton" class="button light">動画を選ぶ</button></div></div><div class="transport"><span id="clock">0:00</span><label class="sr-only" for="seek">再生位置</label><input id="seek" type="range" min="0" max="7200" step="0.1" value="0"><span id="totalClock">120:00</span></div><div class="timeline-head"><span>作業の全体像</span><span>区間を押して移動</span></div><div id="timeline" class="timeline" aria-label="全作業の時間軸"></div><div class="legend"><span><i class="matched"></i>標準作業</span><span><i class="partial"></i>一部対応</span><span><i class="unmatched"></i>未記載</span><span><i class="uncertain"></i>要確認</span></div></div><section id="inspector" class="panel inspector" aria-label="選択した作業の詳細"></section></div>
+    <section class="panel list-panel"><div class="panel-heading"><h2>観察した作業</h2><span id="listCount">20件</span></div><div class="list-tools"><label class="sr-only" for="search">作業名を検索</label><input type="search" id="search" placeholder="作業・部品・場所で検索"><label class="sr-only" for="filter">区間の絞り込み</label><select id="filter"><option value="all">すべて</option><option value="pending">未確認のみ</option><option value="unmatched">未記載</option><option value="uncertain">対応を要確認</option><option value="partial">一部対応</option><option value="matched">標準作業</option></select></div><div id="segmentList" class="segment-list"></div><div class="pagination"><button id="prevPage" class="button small secondary">前へ</button><span id="pageInfo">1 / 1</span><button id="nextPage" class="button small secondary">次へ</button></div><div class="list-foot">実行した順序で表示。標準の順序へ並べ替えません。</div></section>
+   </div>
+  </section>
+  <section id="compare" class="view" hidden></section>
+  <section id="analytics" class="view" hidden></section>
+  <section id="sop" class="view" hidden></section>
+  <footer>各区間の名前や時間は、動画を見て確認してください。サンプルで示す方式の差は精度の比較ではありません。</footer>
+ </main>
+ <dialog id="editDialog"><form id="editForm"><div class="dialog-head"><h2>作業区間を修正</h2><button type="button" data-close="editDialog" aria-label="閉じる">×</button></div><p id="editAction"></p><div class="form-grid"><label>開始（秒）<input name="start_sec" type="number" step="any" required></label><label>終了（秒）<input name="end_sec" type="number" step="any" required></label></div><p class="field-help">境界を動かすと、隣の区間も同じ時刻に合わせます。変更された区間は未確認へ戻ります。</p><label>標準との対応<select name="match_status"><option value="matched">標準作業</option><option value="partial">一部対応</option><option value="unmatched">未記載</option><option value="uncertain">要確認</option></select></label><label>対応する標準作業<select name="standard_id"></select></label><label>確認状態<select name="review_status"><option value="draft">未確認</option><option value="reviewed">確認中</option><option value="verified">確認済み</option></select></label><label>確認メモ<textarea name="note" rows="3" maxlength="2000" placeholder="現場で確認したことを記入"></textarea></label><p id="editError" class="error" role="alert" hidden></p><div class="dialog-actions"><button type="button" class="button secondary" data-close="editDialog">戻る</button><button type="submit" class="button primary">修正を反映</button></div></form></dialog>
+ <dialog id="helpDialog"><div class="dialog-head"><h2>このモックの使い方</h2><button data-close="helpDialog" aria-label="閉じる">×</button></div><ol class="help-list"><li>「対象動画を選ぶ」で動画を開きます。</li><li>「操作用サンプルを表示」で2方式の見え方を体験します。</li><li>区間を選ぶと動画がその位置へ移動します。</li><li>実際の結果は、仕様書の形式にそろえたJSONで読み込めます。</li><li>修正後は「結果を保存」。閉じると未保存の変更は消えます。</li></ol><div class="help-note"><h3>見本なし／見本ありとは？</h3><p>Zero-shotは正解付き動画例を使わず、Few-shotは正解付き標準動画を見本にして照合する方式です。今回のモックはGemini未接続です。見本動画の選択も登録操作の体験で、分析には使われません。</p><p>「標準作業」は標準との対応を示し、人の確認済みを意味しません。「未記載」も直ちにムダとは判断しません。</p></div><button class="button primary" data-close="helpDialog">画面に戻る</button></dialog>
+ <div id="toast" role="status" class="toast" hidden></div>
+ <script src="core.js"></script><script src="app.js"></script>
+</body>
+</html>

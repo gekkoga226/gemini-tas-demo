@@ -2,9 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import {fixture} from '../test-support/fixture.js';
+import {fixture,waitRun} from '../test-support/fixture.js';
 import {defaultSettings} from '../src/settings.js';
-import {id} from '../src/core.js';
+import {id,sha256} from '../src/core.js';
 import {runAdditionalChecks} from '../tools/geap-probe/extra-checks.mjs';
 test('Checks 7–11 execute synthetic contracts end-to-end, persist full inputs, keep artifacts shared only within repetitions and rescore without API',async t=>{
   const {service,config,demo}=await fixture(t),dir=path.resolve('.local-validation',`probe-fixture-${id()}`);await fs.mkdir(dir,{recursive:true});const actual=await service.getMedia(demo.actual_video_id),v=(await service.getSet(demo.standard_set_id)).vocabulary;
@@ -15,4 +15,17 @@ test('Checks 7–11 execute synthetic contracts end-to-end, persist full inputs,
   const records=JSON.parse(await fs.readFile(path.join(run.root,'evaluation-records.json')));assert.equal(records.length,51);for(const repetition of [1,2,3]){const rs=records.filter(r=>r.check===9&&r.repetition===repetition);assert.equal(new Set(rs.filter(r=>r.analysis_strategy!=='vocabulary_guided').map(r=>r.stage1.artifact_id)).size,1);assert.notEqual(rs.find(r=>r.analysis_strategy==='vocabulary_guided').stage1.artifact_id,rs.find(r=>r.analysis_strategy==='text_only').stage1.artifact_id);}assert.equal(new Set(records.filter(r=>r.check===9&&r.analysis_strategy==='text_only').map(r=>r.stage1.artifact_id)).size,3);
   for(const name of await fs.readdir(path.join(run.root,'requests'))){const body=JSON.parse(await fs.readFile(path.join(run.root,'requests',name),'utf8')),text=JSON.stringify(body.contents);assert.equal(text.includes('gt_segment_id'),false);assert.equal(text.includes('gt_process_id'),false);assert.equal(text.includes('scoring_only'),false);assert.ok(body.contents.flatMap(c=>c.parts).filter(p=>p.fileData?.mimeType==='video/mp4').length<=1);}
   const rescored=await runAdditionalChecks({env:{GEAP_PROBE_MOCK:'true',GEAP_EVAL_RUN:run.root,GEAP_EVAL_OUT_ROOT:path.join(dir,'rescored')},checks:[8,10]});assert.equal(rescored.summary.attempts,0);assert.equal(rescored.summary.checks[0].metrics.length,6);assert.equal(run.summary.coverage.reordered.complete,false);
+
+  // Both standard sources must reach diagnostics, and any source reused as an evaluation video must fail closed.
+  const first=await service.getSet(demo.standard_set_id),second=await service.media.syntheticVideo(18,'追加のお手本');
+  const firstGT=await service.registerGT(await service.store.read(first.build_only_gt.asset_ref)),secondGT=await service.registerGT({...gt,video_id:second.video_id,duration_s:18,segments:gt.segments.slice(0,3)});
+  const build=await service.createStandard({client_request_id:id(),name:'評価用の複数お手本',sources:[{source_video_id:demo.standard_video_id,build_gt_asset_id:firstGT.build_gt_asset_id},{source_video_id:second.video_id,build_gt_asset_id:secondGT.build_gt_asset_id}],vocabulary_ref:demo.vocabulary_ref,profiles:['unguided','guided'],generate_images:true,settings:defaultSettings(config),consent_confirmed:true});
+  assert.equal((await waitRun(service,build.run_id)).status,'awaiting_approval');await service.approve(build.standard_set_id,'synthetic-test');
+  const publishedHash=sha256(await service.getSet(build.standard_set_id));manifest.standard_set_id=build.standard_set_id;await fs.writeFile(path.join(dir,'manifest.json'),JSON.stringify(manifest));
+  const multi=await runAdditionalChecks({env,checks:[7]});assert.deepEqual(multi.summary.missing_inputs,[]);assert.ok(multi.summary.checks.every(c=>c.failures.length===0));
+  const freeform=JSON.parse(await fs.readFile(path.join(multi.root,'standard-freeform.json')));assert.equal(freeform.sources.length,2);assert.equal(freeform.examples.length,7);
+  const resolved=JSON.parse(await fs.readFile(path.join(multi.root,'resolved-manifest.json')));assert.equal(resolved.standard_sources.length,2);
+  for(const name of await fs.readdir(path.join(multi.root,'requests'))){const body=JSON.parse(await fs.readFile(path.join(multi.root,'requests',name))),context=JSON.parse(body.contents[0].parts[0].text);if(context.examples?.length){assert.equal(context.examples.length,7);assert.equal(JSON.stringify(context.examples).includes('start_s'),false);}}
+  manifest.cases[0].inference={video_id:second.video_id,asset_ref:service.store.resolve(second.asset_ref)};await fs.writeFile(path.join(dir,'gt.json'),JSON.stringify({...gt,video_id:second.video_id,duration_s:18,segments:gt.segments.slice(0,3)}));await fs.writeFile(path.join(dir,'manifest.json'),JSON.stringify(manifest));
+  const leaked=await runAdditionalChecks({env,checks:[7]});assert.ok(leaked.summary.missing_inputs.some(s=>s.startsWith('DATASET_LEAK:')));assert.equal(leaked.summary.attempts,0);assert.equal(sha256(await service.getSet(build.standard_set_id)),publishedHash);
 });

@@ -50,7 +50,7 @@ export class MediaTools {
     const publicArgs=['-map','0:v:0','-c:v','copy','-an','-map_metadata','-1','-map_chapters','-1'];
     return {...asset,asset_ref:ref,size_bytes:(await fs.stat(this.store.resolve(ref))).size,sha256:hash,source_sha256:asset.sha256,preprocess_version:sha256({version:'strip-audio.v1',tools:versions,args:publicArgs}),transform:{version:'strip-audio.v1',tools:versions,args:publicArgs},cleanup_asset_id:entry.asset_id};
   }
-  async extractFrames({asset,gt,setId,exampleIds,signal}) {
+  async extractFrames({asset,gt,setId,sourceId=null,exampleIds,signal}) {
     const source=this.store.resolve(asset.asset_ref),versions=await this.versions();
     const r=await this.command(this.config.ffprobe,['-v','error','-select_streams','v:0','-show_frames','-show_entries','frame=best_effort_timestamp_time','-of','json',source],signal);
     const frames=JSON.parse(r.stdout).frames.map((f,index)=>({index,time:Number(f.best_effort_timestamp_time)-(asset.start_time_s||0)})).filter(f=>Number.isFinite(f.time));
@@ -60,7 +60,8 @@ export class MediaTools {
       const used=new Set();
       for(const portion of [.2,.5,.8]) { const requested=Number((s.start_s+portion*(s.end_s-s.start_s)).toFixed(9));const f=inRange.find(f=>f.time>=requested)??inRange.at(-1);if(used.has(f.index))continue;used.add(f.index);selections.push({s,requested,f}); }
     }
-    const indices=[...new Set(selections.map(x=>x.f.index))].sort((a,b)=>a-b);const dir=`standard-sets/${setId}/frames`;await fs.mkdir(this.store.resolve(dir),{recursive:true});
+    demand(sourceId===null || /^[a-zA-Z0-9-]+$/.test(sourceId),'INVALID_SOURCE_ID','お手本の参照IDが不正です。');
+    const indices=[...new Set(selections.map(x=>x.f.index))].sort((a,b)=>a-b);const dir=`standard-sets/${setId}/frames${sourceId?`/${sourceId}`:''}`;await fs.mkdir(this.store.resolve(dir),{recursive:true});
     const select=indices.map(i=>`eq(n\\,${i})`).join('+');
     const filter=`select=${select},scale=w='min(768,iw)':h='min(768,ih)':force_original_aspect_ratio=decrease`;
     const args=['-nostdin','-v','error','-i',source,'-map','0:v:0','-vf',filter,'-vsync','vfr','-q:v','2','-map_metadata','-1','-map_chapters','-1','-an','-y',this.store.resolve(dir+'/%06d.jpg')];

@@ -41,7 +41,7 @@ export function validateObservation(o, interval, audio) {
   FIELDS.forEach(f => {
     const x = o[f]; check(exact(x, ['status','value','evidence_ids']) && ['observed','unknown','not_applicable'].includes(x.status), f, '観察項目の構造不正');
     strings(x.evidence_ids, f); check(x.evidence_ids.every(i => evidence.has(i)), f, '根拠IDが存在しません');
-    check(x.status === 'observed' ? str(x.value) && x.evidence_ids.length > 0 : x.value === null && o.unobserved_occlusions.some(y => y.field === f), f, '値・根拠・不足理由が不整合');
+    check(x.status === 'observed' ? str(x.value) && x.evidence_ids.length > 0 : x.value === null && (x.status === 'not_applicable' || o.unobserved_occlusions.some(y => y.field === f)), f, '値・根拠・不足理由が不整合');
   });
   check(audio || o.audio_cues.status === 'not_applicable', 'audio_cues', '音声なしではnot_applicable');
   check(typeof o.insufficient_discriminative_features === 'boolean', 'insufficient', 'booleanが必要です');
@@ -95,6 +95,23 @@ export function validateGT(gt, video, vocabulary) {
     check(gt.segments.every(s => str(s.gt_process_id) && vocabulary.labels.some(l => l.job_no === s.job_no && l.job_title === s.job_title)), 'gt','出現ID/ラベル不一致');
     check(new Set(gt.segments.map(s => s.gt_process_id)).size === gt.segments.length, 'gt_process_id','出現ID重複');
     return gt;
+  });
+}
+// The array is a build-only contract. Never accept it on the analysis endpoint.
+export function standardSourcesInput(body) {
+  return wrap('INVALID_STANDARD_SOURCES', () => {
+    const multi = Object.hasOwn(body, 'sources');
+    check(!multi || (!body.source_video_id && !body.build_gt_asset_id), 'sources', '単一動画指定と複数動画指定は併用できません');
+    const sources = multi ? body.sources : [{source_video_id:body.source_video_id,build_gt_asset_id:body.build_gt_asset_id}];
+    check(Array.isArray(sources) && sources.length > 0, 'sources', 'お手本動画と正解区間を1組以上登録してください');
+    const videos = new Set();
+    sources.forEach((s, i) => {
+      check(obj(s) && Object.keys(s).every(k => ['source_video_id','build_gt_asset_id','name'].includes(k)), `sources[${i}]`, '未対応の項目');
+      check(str(s.source_video_id) && str(s.build_gt_asset_id) && !videos.has(s.source_video_id), `sources[${i}]`, '動画・正解区間が未指定、または動画が重複しています');
+      check(s.name === undefined || (str(s.name) && s.name.length <= 200), 'name', 'お手本名は1〜200文字');
+      videos.add(s.source_video_id);
+    });
+    return sources;
   });
 }
 export function validateSafety(policy) { demand(str(policy.safety_policy_version) && unit(policy.tie_margin) && unit(policy.review_threshold) && unit(policy.forced_confidence_cap) && policy.forced_confidence_cap < policy.review_threshold, 'INVALID_SAFETY_POLICY', '安全網の版・閾値・capを確認してください。'); return policy; }

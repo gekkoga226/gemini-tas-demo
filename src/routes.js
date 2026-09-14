@@ -4,6 +4,7 @@ import {safeId} from './store.js';
 import {demand,sha256} from './core.js';
 import {defaultSettings} from './settings.js';
 import {displayAdapter} from './pipeline.js';
+import {toWorkReview} from './work-review.js';
 
 export async function readBody(request,limit=4*1024*1024) {let length=0,chunks=[];for await(const c of request){length+=c.length;demand(length<=limit,'REQUEST_TOO_LARGE','入力JSONが大きすぎます。',413);chunks.push(c);}try{return JSON.parse(Buffer.concat(chunks).toString('utf8')||'{}');}catch{demand(false,'INVALID_JSON','JSONの書式が不正です。');}}
 export async function streamFile(request,response,file,mime) {
@@ -35,12 +36,19 @@ export async function routeTas(request,response,url,service,json) {
   if(m==='GET'&&p==='/api/standard-sets'){json(response,200,{standard_sets:await service.sets()});return;}
   if(m==='POST'&&p==='/api/standard-sets'){const r=await service.createStandard(await readBody(request));json(response,202,{run_id:r.run_id,standard_set_id:r.standard_set_id,status:r.status});return;}
   match=p.match(/^\/api\/standard-sets\/([^/]+)(?:\/(approve|retire|delete-media|inspection))?$/);
-  if(match){const setId=safeId(match[1]);if(m==='POST'&&match[2]==='approve'){json(response,200,await service.approve(setId,(await readBody(request)).approved_by));return;}if(m==='POST'&&match[2]==='retire'){json(response,200,await service.retire(setId));return;}if(m==='POST'&&match[2]==='delete-media'){json(response,200,await service.deleteSetMedia(setId));return;}if(m==='GET'){const s=await service.getSet(setId);json(response,200,{...service.publicSet(s),...(match[2]==='inspection'?{examples:s.examples}: {})});return;}}
+  if(match){const setId=safeId(match[1]);if(m==='POST'&&match[2]==='approve'){json(response,200,await service.approve(setId,(await readBody(request)).approved_by));return;}if(m==='POST'&&match[2]==='retire'){json(response,200,await service.retire(setId));return;}if(m==='POST'&&match[2]==='delete-media'){json(response,200,await service.deleteSetMedia(setId));return;}if(m==='GET'){const s=await service.getSet(setId);json(response,200,{...await service.setView(s),...(match[2]==='inspection'?{examples:s.examples}: {})});return;}}
   match=p.match(/^\/api\/standard-images\/([^/]+)\/([^/]+)$/);
   if(m==='GET'&&match){const set=await service.getSet(match[1]),img=set.representative_images.find(i=>i.image_id===match[2]);demand(img,'IMAGE_NOT_FOUND','代表画像が見つかりません。',404);await streamFile(request,response,service.store.resolve(img.asset_ref),'image/jpeg');return;}
   if(m==='POST'&&p==='/api/comparison-sessions'){json(response,201,await service.createSession(await readBody(request)));return;}
   match=p.match(/^\/api\/comparison-sessions\/([^/]+)\/close$/);if(m==='POST'&&match){json(response,200,await service.closeSession(match[1]));return;}
   if(m==='GET'&&p==='/api/analysis-runs'){json(response,200,{runs:await service.history()});return;}
+  match=p.match(/^\/api\/analysis-runs\/([^/]+)\/work-review$/);
+  if(m==='GET'&&match){
+    const runId=safeId(match[1]), result=await service.result(runId);
+    const run=await service.store.read(`runs/${runId}/run.json`);
+    const media=await service.getMedia(result.input.video_id);
+    json(response,200,toWorkReview(result,run.snapshot.vocabulary,media));return;
+  }
   if(m==='POST'&&p==='/api/analysis-runs'){const r=await service.createAnalysis(await readBody(request));json(response,202,{run_id:r.run_id,status:r.status,status_url:`/api/analysis-runs/${r.run_id}`});return;}
   match=p.match(/^\/api\/analysis-runs\/([^/]+)\/reviews\/([^/]+)$/);if(m==='GET'&&match){const runId=safeId(match[1]),reviewId=safeId(match[2]),review=await service.store.read(`runs/${runId}/reviews/${reviewId}/review.json`);if(url.searchParams.get('download')==='1')response.setHeader('content-disposition',`attachment; filename="${review.mock?'MOCK_':''}${runId}_reviewed.json"`);json(response,200,review);return;}
   match=p.match(/^\/api\/analysis-runs\/([^/]+)(?:\/(result|display|cancel|retry|reviews|cleanup-retry))?$/);

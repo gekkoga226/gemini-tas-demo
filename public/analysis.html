@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>新しい分析｜作業みえる</title>
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/analysis-refinement.css">
+</head>
+<body>
+  <a class="analysis-skip" href="#inputTitle">分析の入力へ</a>
+  <nav class="work-return" aria-label="ワークスペース"><a class="analysis-brand" href="/"><img src="/work-mark.svg" alt="" width="24" height="24">作業みえる</a><a href="#inputTitle">新しい分析</a><button id="openLibrary" type="button">お手本ライブラリ</button><a href="#historyTitle">実行履歴</a><a href="/">作業レビュー</a></nav>
+  <header class="app-header">
+    <div class="brand-lockup">
+      <span class="brand-signal" aria-hidden="true"><i></i><i></i><i></i></span>
+      <div>
+        <p class="eyebrow">TAS REVIEW CONSOLE</p>
+        <h1>新しい分析</h1>
+        <p class="subtitle">動画を選んで、作業の時間と違いを確かめましょう。</p>
+      </div>
+    </div>
+    <div class="header-status">
+      <span class="header-kicker">LOCAL WORKSTATION</span>
+      <div id="modeBadge" class="mode-badge">接続を確認中</div>
+    </div>
+  </header>
+  <a class="mobile-start-link" href="#launchTitle">開始条件・分析ボタンへ ↓</a>
+
+  <main>
+    <div class="analysis-launch">
+      <section class="card input-card launch-input" aria-labelledby="inputTitle">
+        <div class="section-heading"><div class="heading-copy"><span class="step">1</span><div><h2 id="inputTitle" tabindex="-1">作業動画を選ぶ</h2><p class="section-caption">登録はこのPCへの保存です。分析の開始時に送信します。</p></div></div><button id="demoInputButton" class="button secondary" type="button">合成サンプルで試す</button></div>
+        <div class="video-choice">
+          <label class="drop-zone" id="videoDrop"><input id="videoInput" type="file" accept="video/mp4,.mp4"><span class="file-kind">＋</span><strong>新しい動画を登録</strong><span>MP4を選ぶ・ドロップ</span></label>
+          <div class="registered-choice"><label for="registeredVideo">登録済み動画から選ぶ</label><select id="registeredVideo"><option value="">動画を選択</option></select><p id="videoMeta" role="status">動画はまだ選ばれていません</p></div>
+        </div>
+        <div class="section-heading input-step"><div class="heading-copy"><span class="step">2</span><div><h2>お手本を選ぶ</h2><p class="section-caption">同じ作業のお手本をまとめた「標準セット」を使います。</p></div></div><button id="manageSets" class="icon-button" type="button">お手本を登録・確認</button></div>
+        <div class="view-tabs" role="tablist" aria-label="お手本の有無"><button id="fewShotTab" class="tab active" role="tab" aria-selected="true" type="button">お手本と照合</button><button id="zeroShotTab" class="tab" role="tab" aria-selected="false" type="button">お手本なしで分析</button></div>
+        <div class="form-grid"><label>標準セット<select id="standardSet"><option value="">選択してください</option></select></label><label id="vocabularyChoice" hidden>確認済み語彙<select id="vocabularySelect"><option value="">標準セットの語彙を使用</option></select></label></div><p id="pdfMeta" class="hint">標準セット未選択</p>
+        <label class="strategy-label" for="analysisStrategy">分析方式（精度比較用）</label>
+        <select id="analysisStrategy"><option value="text_only">案1：項目化した文章照合</option><option value="vocabulary_guided">案2：語彙補助の文章照合</option><option value="visual_evidence">案3：映像根拠併用</option></select>
+        <details class="settings-panel"><summary>詳細設定・方式の違い</summary><p class="hint">同じ動画・お手本・設定で方式を比較できます。案1と案3は同じ区間分割を再利用し、案2は区間分割からやり直します。案3の再判定には動画と必要な代表画像を送信します。</p><div class="form-grid"><label>処理モード<select id="processingMode"><option value="AGENTIC">agentic（要求値）</option><option value="STATIC">static</option></select></label><label>入力FPS<input id="inputFps" type="number" min="0.01" max="24" step="0.01" value="1"></label><label><input id="audioEnabled" type="checkbox">音声を含める</label><label>プロンプト版<select id="promptRelease"><option value="round18.v1">Round 18 / v1</option></select></label></div><pre id="settingsSummary"></pre></details>
+      </section>
+      <aside class="card launch-confirm" aria-labelledby="launchTitle">
+        <div class="heading-copy"><span class="step">3</span><h2 id="launchTitle">確認して分析を開始</h2></div>
+        <ul id="readinessList" class="readiness-list" aria-label="開始条件"></ul>
+        <div id="inputNotice" class="notice neutral">送信先を確認中です。</div>
+        <label class="consent"><input id="consentConfirmed" type="checkbox">作業者の同意を取得済みです</label>
+        <p class="hint">結果は人が映像で確認し、人事評価や処遇に直結させないでください。</p>
+        <p id="inputSummary" role="status">動画を選んでください。</p>
+        <button id="startButton" class="button primary" type="button" aria-describedby="inputSummary" disabled>分析を開始</button>
+        <button id="cancelButton" class="button danger" type="button" hidden>実行中の処理を中止</button>
+        <button id="rerunStage2" class="button secondary" type="button" disabled>同じ区間でラベルを再判定</button>
+        <a id="resultLink" class="button secondary" href="#workspace" hidden>完了した結果を確認 →</a>
+      </aside>
+    </div>
+
+    <section class="card status-card" aria-live="polite" aria-atomic="true">
+      <div class="status-main">
+        <span id="statusDot" class="status-dot idle"></span>
+        <div><small>解析状態</small><strong id="statusText">待機中</strong></div>
+      </div>
+      <div class="status-time"><small>経過時間</small><strong id="elapsedText">00:00</strong></div>
+      <p id="activeRunSummary" class="active-run-summary"></p>
+      <p id="statusMessage">入力を準備してください。</p>
+      <p id="connectionStatus" class="hint" role="status"></p><p id="cleanupStatus">一時媒体：対象なし</p>
+    </section>
+
+    <section id="setManager" class="card input-card" hidden aria-labelledby="setManagerTitle">
+      <div class="section-heading"><div><h2 id="setManagerTitle" tabindex="-1">お手本ライブラリ</h2><p class="section-caption">同じ作業の複数の動画を、ひとつの標準セットにまとめます。</p></div><button id="closeSetManager" class="icon-button" type="button">閉じる</button></div>
+      <div class="form-grid"><label>保存済みセットを確認<select id="librarySet"><option value="">新しいセットを作成</option></select></label><button id="newSetDraft" class="button secondary" type="button">新しいセットを作る</button></div>
+      <div id="setInspection"></div>
+      <div class="approval-area"><label>確認者<input id="setReviewer" value="ローカル確認者"></label><label class="consent"><input id="buildInspectionConfirmed" type="checkbox">すべてのお手本の記述・不足申告・代表画像を確認しました</label><div class="action-row"><button id="approveSetButton" class="button primary" type="button" disabled>確認したセットを公開</button><button id="retireSetButton" class="icon-button" type="button">選択セットの利用を停止</button></div></div>
+      <div id="standardAnalytics"></div>
+      <details id="buildEditor" open><summary>お手本を登録してセットを作成</summary>
+        <p class="hint">動画ごとに、正解が確認された作業区間を入力します。実作業の採点用GTはここに登録しないでください。</p>
+        <div class="form-grid"><label>セット名<input id="setName" value="標準作業セット" maxlength="200"></label><label>確認済みの作業名一覧（語彙）<select id="buildVocabulary"></select></label></div>
+        <div id="buildSources"></div><button id="addBuildSource" class="button secondary" type="button">＋ お手本動画を追加</button>
+        <div class="form-grid build-options"><label><input id="buildGuided" type="checkbox" checked>案2用の記述も生成</label><label><input id="buildImages" type="checkbox" checked>代表画像を生成（案3用）</label></div>
+        <div id="buildInputNotice" class="notice neutral"></div>
+        <label class="consent"><input id="buildConsent" type="checkbox">登録するすべての動画について作業者の同意を取得済みです</label>
+        <p id="buildMessage" role="status"></p><button id="buildSetButton" class="button primary" type="button" disabled>お手本セットを生成</button>
+      </details>
+      <details><summary>語彙・識別条件を登録</summary><p class="hint">標準書・開発用資料から作成し、確認したvocabulary.v1とdiscriminators.v1を登録します。評価GTから条件を作らないでください。</p><div class="form-grid"><label>語彙JSON<input id="vocabularyFile" type="file" accept=".json"></label><label>識別条件JSON<input id="discriminatorFile" type="file" accept=".json"></label></div><button id="registerVocabulary" class="button secondary" type="button">確認済みとして登録</button></details>
+      <details><summary>標準書PDFから語彙を抽出</summary><p class="hint">標準書を一度抽出し、語彙と識別条件を人が修正・確認してから登録します。モックの抽出内容は合成例です。</p><label>標準書PDF<input id="vocabularyPdf" type="file" accept="application/pdf,.pdf"></label><p id="pdfDestination" class="notice neutral"></p><label class="consent"><input id="pdfConsent" type="checkbox">この標準書の送信範囲を確認しました</label><button id="extractVocabulary" type="button" class="button secondary">語彙を抽出</button><div id="vocabularyDraft" hidden><label>語彙（vocabulary.v1）<textarea id="draftVocabulary" rows="14"></textarea></label><label>識別条件（discriminators.v1）<textarea id="draftDiscriminators" rows="14"></textarea></label><button id="approveVocabulary" type="button" class="button secondary">修正内容を確認して語彙を登録</button></div></details>
+    </section>
+
+    <section class="card history-card" aria-labelledby="historyTitle"><div class="section-heading"><div><p class="section-kicker">HISTORY</p><h2 id="historyTitle">実行履歴</h2></div><button id="refreshHistory" class="icon-button" type="button">更新</button></div><p class="hint">ブラウザを閉じてもサーバーが動いていれば処理は続きます。PC停止後はここから状態を確認してください。</p><div id="historyList" class="history-list"></div></section>
+
+    <section id="workspace" class="workspace" hidden>
+      <section id="resultAnalytics" class="card result-analytics"></section>
+      <section class="card media-card">
+        <div class="section-heading compact"><h2>お手本動画</h2><label><input id="syncPlayback" type="checkbox" checked>区間同期</label></div>
+        <label>比較するお手本<select id="standardSource"></select></label>
+        <p id="standardInferenceNotice" class="hint"></p>
+        <div class="video-shell"><video id="standardPlayer" controls preload="metadata"></video></div>
+        <p id="syncStatus" class="hint">同じJob No.の区間へ移動します。チェックを外すと独立再生できます。</p>
+        <div class="section-heading compact"><div class="heading-copy"><span class="step">02</span><div><p class="section-kicker">VIDEO</p><h2>作業動画</h2><p class="section-caption">映像の内容を確認します。時刻の移動と区間編集は下のタイムラインで行います。</p></div></div></div>
+        <div class="video-shell">
+          <video id="videoPlayer" controls preload="metadata"></video>
+          <div id="videoPlaceholder" class="video-placeholder">
+            <span>LOCAL MOCK</span>
+            <strong>結果の動画をここに表示します</strong>
+            <small>サンプルは合成動画で操作を確認できます</small>
+          </div>
+        </div>
+      </section>
+
+      <section class="card timeline-card" aria-labelledby="timelineTitle">
+        <div class="section-heading compact timeline-heading"><div><p class="section-kicker">TIMELINE</p><h2 id="timelineTitle">作業タイムライン</h2><p class="section-caption">現在位置と作業区間を同じ時間軸で確認し、必要な範囲を拡大して編集します。</p></div></div>
+        <div id="resultIdentity" class="notice neutral"></div><p id="globalWarnings" class="warning-list"></p>
+        <div class="playback-meta">
+          <div class="time-readout"><small>現在時刻 / 全体</small><strong id="playbackTime">00:00:00 / 00:00:30</strong></div>
+          <div class="active-readout"><span class="current-dot" aria-hidden="true"></span><div><small>現在位置の作業</small><strong id="activeSegmentLabel">該当する作業区間なし</strong></div></div>
+        </div>
+        <div id="timeline" class="timeline" role="slider" tabindex="0" aria-label="動画の現在位置" aria-describedby="timelineHint" aria-valuemin="0" aria-valuemax="30" aria-valuenow="0" aria-valuetext="00:00:00 / 00:00:30">
+          <div id="timelineScroll" class="timeline-scroll">
+            <div id="timelineTrack" class="timeline-track">
+              <div id="timelineRuler" class="timeline-ruler" aria-hidden="true"></div>
+              <div id="standardTimelineSegments" aria-label="標準作業の区間"></div>
+              <div id="timelineSegments"></div>
+              <div id="playhead" class="playhead" data-time="00:00:00"><span aria-hidden="true"></span></div>
+            </div>
+          </div>
+        </div>
+        <div class="timeline-footer">
+          <p id="timelineHint" class="hint timeline-hint"><span><kbd>クリック</kbd> 現在位置を移動</span><span><kbd>← →</kbd> 1秒移動</span><span><kbd>両端</kbd> 選択区間の時刻を調整（短い区間は拡大）</span><span class="timeline-legend" aria-label="タイムラインの凡例"><span><i class="legend-mark selected" aria-hidden="true"></i>選択中</span><span><i class="legend-mark current" aria-hidden="true"></i>現在位置</span><span><i class="legend-mark warning" aria-hidden="true"></i>AI予測の要確認</span></span></p>
+          <div class="timeline-zoom" role="group" aria-label="タイムラインの表示倍率">
+            <span class="timeline-zoom-label">表示倍率</span>
+            <button id="timelineZoomOut" class="timeline-zoom-button" type="button" aria-label="タイムラインを縮小" disabled>−</button>
+            <output id="timelineZoomValue" aria-live="polite">1x</output>
+            <button id="timelineZoomIn" class="timeline-zoom-button" type="button" aria-label="タイムラインを拡大">＋</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="card editor-card">
+        <div class="section-heading compact"><div class="heading-copy"><span class="step">03</span><div><p class="section-kicker">REVIEW</p><h2>作業ラベルを確認・修正</h2><p class="section-caption">一覧で選ぶと動画が区間先頭へ移動します。時刻と作業名は下で編集できます。</p></div></div></div>
+        <div class="view-tabs" role="tablist">
+          <button id="reviewedTab" class="tab active" type="button" role="tab" aria-selected="true">確認・修正結果</button>
+          <button id="predictionTab" class="tab" type="button" role="tab" aria-selected="false">AI予測（原本）</button>
+        </div>
+        <div class="editor-tools">
+          <button id="addButton" class="icon-button" type="button">＋ 区間追加</button>
+          <button id="undoButton" class="icon-button" type="button" disabled>↶ Undo</button>
+          <button id="redoButton" class="icon-button" type="button" disabled>↷ Redo</button>
+        </div>
+        <div id="segmentList" class="segment-list"></div>
+        <div id="detailPanel" class="detail-panel">
+          <p class="empty-state">区間を選択してください。</p>
+        </div>
+        <div id="evidencePanel" class="evidence-panel"></div>
+      </section>
+
+      <section class="card output-card">
+        <div class="section-heading compact"><div class="heading-copy"><span class="step">04</span><div><p class="section-kicker">EXPORT</p><h2>確認結果を保存</h2><p class="section-caption">AI原本と確認済み結果を分けて保存します。</p></div></div><span id="dirtyBadge" class="dirty-badge clean">変更なし</span></div>
+        <div class="download-grid">
+          <button id="downloadPrediction" class="button secondary" type="button">AI予測JSON</button>
+          <button id="downloadReviewed" class="button primary" type="button">確認済みJSONを保存</button>
+        </div>
+        <label>確認・修正の担当者<input id="reviewEditor" value="ローカル確認者"></label><button id="saveReviewButton" class="button secondary" type="button">修正を履歴に保存</button>
+        <p id="reviewHistory" class="hint"></p><p class="hint">確認済みJSONにもAI原本全体を original_result として同梱します（方式・入力ハッシュ・版・共有元・候補と根拠・モック表示）。修正後の区間は segments、確認者・日時・変更内容も保存します。候補と根拠はAI原本の記録です。推論原本は上書きしません。</p>
+      </section>
+    </section>
+  </main>
+
+  <dialog id="addDialog">
+    <form id="addForm" method="dialog">
+      <p class="dialog-kicker">ADD WORK SEGMENT</p>
+      <h2>作業区間を追加</h2>
+      <p class="dialog-description">空いている時間に作業区間を追加します。既存区間と重なる場合は時刻を調整してください。</p>
+      <div class="form-grid">
+        <label>開始時刻<input name="start_time" required pattern="\d{2}:\d{2}:\d{2}"></label>
+        <label>終了時刻<input name="end_time" required pattern="\d{2}:\d{2}:\d{2}"></label>
+        <label>Job No.<input name="job_no"></label>
+        <label>標準書ページ<input name="page_number"></label>
+        <label class="wide">作業タイトル<input name="job_title"></label>
+      </div>
+      <p id="addError" class="form-error"></p>
+      <div class="dialog-actions"><button class="button secondary" value="cancel">キャンセル</button><button id="confirmAdd" class="button primary" value="default">追加</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="confirmDialog" class="confirm-dialog">
+    <form method="dialog">
+      <p class="dialog-kicker">CONFIRM ACTION</p>
+      <h2 id="confirmTitle">操作を確認</h2>
+      <p id="confirmMessage" class="dialog-description"></p>
+      <div class="dialog-actions"><button id="confirmCancel" class="button secondary" value="cancel">キャンセル</button><button id="confirmAccept" class="button primary" value="confirm">続行</button></div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
