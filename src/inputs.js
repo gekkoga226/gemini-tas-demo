@@ -2,7 +2,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { clone, demand, sha256, canonicalJSON, profileFor } from './core.js';
-import { DISCOVER_SCHEMA, FIXED_SCHEMA, STAGE2_SCHEMA, OBSERVATION_SCHEMA, FREEFORM_SCHEMA } from './response-schemas.js';
+import { DISCOVER_SCHEMA, FIXED_SCHEMA, STAGE2_SCHEMA, STAGE2_SCHEMA_VERSION, STAGE2_EMPTY_EVIDENCE_SCHEMA, STAGE2_EMPTY_EVIDENCE_SCHEMA_VERSION, OBSERVATION_SCHEMA, FREEFORM_SCHEMA } from './response-schemas.js';
+import { FIELDS } from './contracts.js';
 
 const ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 export async function loadPrompts(release='round18.v1') {
@@ -19,7 +20,15 @@ export async function loadPrompts(release='round18.v1') {
 }
 export function vocabularyView(v) { return v.labels.map(({job_no,job_title,kind})=>({job_no,job_title,kind})).sort((a,b)=>a.job_no<b.job_no?-1:a.job_no>b.job_no?1:0); }
 export function discriminatorView(d) { return d.conditions.map(({job_no,similar_job_nos,observable_features,unknown_when})=>({job_no,similar_job_nos,observable_features,unknown_when})).sort((a,b)=>a.job_no<b.job_no?-1:1); }
-export function exampleView(set,profile) { return (set?.examples?.[profile]||[]).map(({example_id,label,observation})=>({example_id,label:clone(label),observation:clone(observation)})).sort((a,b)=>a.label.job_no<b.label.job_no?-1:a.label.job_no>b.label.job_no?1:a.example_id.localeCompare(b.example_id)); }
+export const EXAMPLE_VIEW_VERSION='example-view.v2';
+export function exampleView(set,profile) {
+  return (set?.examples?.[profile]||[]).map(({example_id,label,observation})=>{
+    const view=clone(observation);
+    // Keep evidence identity and visible observations, but no source timestamps or provenance.
+    view.evidence=observation.evidence.map(({evidence_id,source,description})=>({evidence_id,source,description}));
+    return {example_id,label:clone(label),observation:view};
+  }).sort((a,b)=>a.label.job_no<b.label.job_no?-1:a.label.job_no>b.label.job_no?1:a.example_id.localeCompare(b.example_id));
+}
 export function videoPart(media, settings) {
   const p={fileData:{fileUri:media.uri,mimeType:media.mime_type},mediaProcessing:settings.processing_mode,videoMetadata:{fps:settings.fps}};
   if(settings.media_resolution!=='api_default') p.mediaResolution=settings.media_resolution;
@@ -40,8 +49,12 @@ export function buildStage2({segments,video,settings,prompts,analysis_strategy,a
   const visual=analysis_strategy==='visual_evidence';
   const examples=analysis_mode==='few_shot'?exampleView(set,profileFor(analysis_strategy)):[];
   const usedImages=visual&&analysis_mode==='few_shot'&&evidence_condition!=='text_actual_video'?images:[];
+  const hasFieldEvidence=[...segments,...examples].some(s=>FIELDS.some(field=>s.observation[field]?.evidence_ids.some(id=>s.observation.evidence.some(e=>e.evidence_id===id))));
+  const emptyEvidence=!visual&&!hasFieldEvidence;
+  const schema=emptyEvidence?STAGE2_EMPTY_EVIDENCE_SCHEMA:STAGE2_SCHEMA;
+  const schema_version=emptyEvidence?STAGE2_EMPTY_EVIDENCE_SCHEMA_VERSION:STAGE2_SCHEMA_VERSION;
   const prompt=prompts.loaded[visual?'stage2_visual':'stage2_text'];
-  const parts=[textPart({task:'fixed_segment_labeling',intervals:segments.map(({segment_id,start_s,end_s,observation})=>({segment_id,start_s,end_s,observation})),examples,vocabulary:vocabularyView(vocabulary),discriminators:discriminatorView(discriminators)})];
+  const parts=[textPart({task:'fixed_segment_labeling',example_view_version:EXAMPLE_VIEW_VERSION,intervals:segments.map(({segment_id,start_s,end_s,observation})=>({segment_id,start_s,end_s,observation})),examples,vocabulary:vocabularyView(vocabulary),discriminators:discriminatorView(discriminators)})];
   if(visual) parts.push(textPart({actual_video_id:video.video_id}),videoPart(video,settings));
   usedImages.forEach((img,i)=>{
     const example=examples.find(e=>e.example_id===img.example_id);
@@ -49,18 +62,22 @@ export function buildStage2({segments,video,settings,prompts,analysis_strategy,a
     parts.push(textPart({image_id:img.image_id,example_id:img.example_id,job_no:example.label.job_no,frame_order:i+1}),{fileData:{fileUri:img.uri,mimeType:'image/jpeg'}});
   });
   parts.push(textPart('全入力segment_idへラベルを一つずつ付けてください。時刻は出力せず、候補・生の確信度・根拠を返してください。'));
-  const body={systemInstruction:{parts:[{text:prompt.text}]},contents:[{role:'user',parts}],generationConfig:{...settings.stage2_generation_config,responseMimeType:'application/json',responseSchema:STAGE2_SCHEMA}};
+  const body={systemInstruction:{parts:[{text:prompt.text}]},contents:[{role:'user',parts}],generationConfig:{...settings.stage2_generation_config,responseMimeType:'application/json',responseSchema:schema}};
   auditRequest(body);
-  return {body,prompt,schema:STAGE2_SCHEMA,input:{segments,vocabulary,discriminators,examples,images:usedImages,analysis_strategy,analysis_mode,video_id:video.video_id,duration_s:video.duration_s},evidence_condition:visual?(usedImages.length?'text_actual_video_standard_images':'text_actual_video'):'text'};
+  return {body,prompt,schema,schema_version,input:{segments,vocabulary,discriminators,examples,images:usedImages,analysis_strategy,analysis_mode,video_id:video.video_id,duration_s:video.duration_s},evidence_condition:visual?(usedImages.length?'text_actual_video_standard_images':'text_actual_video'):'text'};
 }
 export function auditRequest(body) {
   const parts=body.contents.flatMap(c=>c.parts); const videos=parts.filter(p=>p.fileData?.mimeType.startsWith('video/'));
   demand(videos.length<=1,'MULTI_VIDEO_FORBIDDEN','通常推論は1リクエスト1動画です。');
   for(const p of parts) { if(p.fileData) demand(p.fileData.fileUri.startsWith('gs://')||p.fileData.fileUri.startsWith('mock://'),'INVALID_MEDIA_URI','媒体はCloud Storage URIで指定してください。'); if(p.mediaProcessing) demand(p.fileData?.mimeType.startsWith('video/'),'INVALID_PROCESSING_PART','mediaProcessingは動画Part直下のみです。'); }
   // Inspect context objects only; prompt prose may mention prohibited keys.
-  const prohibited=new Set(['build_only_gt','display_segments','scoring_only','gt_segment_id','gt_process_id','gt_ref','scenario','observability','gt_version']);
+  const prohibited=new Set(['build_only_gt','display_segments','scoring_only','gt_segment_id','gt_process_id','gt_ref','scenario','observability','gt_version','sources','source_id','source_video_id','source_video','build_gt_asset_id']);
   function walk(o) { if(!o||typeof o!=='object')return; for(const [k,v] of Object.entries(o)) { demand(!prohibited.has(k),'GT_LEAK','通常入力へGT/採点専用情報が混入しています。'); walk(v); } }
-  for(const p of parts) if(p.text?.startsWith('{')) walk(JSON.parse(p.text));
+  for(const p of parts) if(p.text?.startsWith('{')) {
+    const context=JSON.parse(p.text);walk(context);
+    function noExampleTimes(o) {if(!o||typeof o!=='object')return;for(const [k,v] of Object.entries(o)){demand(!['start_s','end_s','requested_time_s','extracted_time_s','duration_s'].includes(k),'GT_LEAK','お手本の時刻を通常分析へ渡せません。');noExampleTimes(v);}}
+    if(context.examples)noExampleTimes(context.examples);
+  }
   return true;
 }
 export function inputSignature(body, media) {

@@ -3,6 +3,7 @@ tools/geap-probe/report.json
 tools/geap-probe/expected.json
 data/
 .local-validation/
+.local/
 tools/geap-probe/runs/
 
 /data-real/

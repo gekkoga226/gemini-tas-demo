@@ -1,0 +1,5 @@
+{
+  "private": true,
+  "type": "commonjs",
+  "description": "User-supplied mock source, preserved for reference. The rebuilt application is in public/work-*.js."
+}
