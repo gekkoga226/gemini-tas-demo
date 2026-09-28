@@ -1,0 +1,3 @@
+# The prompt files are frozen and checked byte for byte by their sha256 (src/inputs.js loadPrompts).
+# Keep them LF in every checkout, including machines where core.autocrlf=true converts other files.
+prompts/** text eol=lf
