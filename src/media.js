@@ -6,6 +6,28 @@ import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {id,now,sha256,demand,fault} from './core.js';
 const exec=promisify(execFile);
+const TIMELINE_TOLERANCE_S=.001;
+const finite=value=>{const number=Number(value);return Number.isFinite(number)?number:null;};
+function timeBaseSeconds(value) {
+  const match=/^(\d+)\/(\d+)$/.exec(String(value??''));
+  if(!match)return null;
+  const denominator=Number(match[2]);return denominator>0?Number(match[1])/denominator:null;
+}
+function videoTimeline(probe) {
+  const stream=probe.streams?.find(s=>s.codec_type==='video');
+  demand(stream,'INVALID_VIDEO','有効なMP4動画を選んでください。',422);
+  const timeBase=timeBaseSeconds(stream.time_base),startPts=finite(stream.start_pts),durationTs=finite(stream.duration_ts);
+  const startTime=finite(stream.start_time)??(startPts!==null&&timeBase!==null?startPts*timeBase:null)??finite(probe.format?.start_time)??0;
+  const duration=finite(stream.duration)??(durationTs!==null&&timeBase!==null?durationTs*timeBase:null)??finite(probe.format?.duration);
+  const frameCount=finite(stream.nb_frames);
+  return {version:'primary-video-stream.v1',start_time_s:startTime,duration_s:duration,time_base:stream.time_base??null,start_pts:startPts,duration_ts:durationTs,frame_count:Number.isSafeInteger(frameCount)&&frameCount>=0?frameCount:null,codec_name:stream.codec_name??null};
+}
+function sameVideoTimeline(source,submitted) {
+  const a=source.video_timeline,b=submitted.video_timeline;
+  return Math.abs(a.start_time_s-b.start_time_s)<=TIMELINE_TOLERANCE_S&&Math.abs(a.duration_s-b.duration_s)<=TIMELINE_TOLERANCE_S&&
+    a.codec_name===b.codec_name&&source.width===submitted.width&&source.height===submitted.height&&
+    (a.frame_count===null||b.frame_count===null||a.frame_count===b.frame_count);
+}
 export async function hashFile(file) {const h=crypto.createHash('sha256');for await(const chunk of createReadStream(file))h.update(chunk);return h.digest('hex');}
 export class MediaTools {
   constructor(config,store) {this.config=config;this.store=store;}
@@ -15,9 +37,9 @@ export class MediaTools {
   async inspect(file,mime) {
     if(mime==='application/pdf') {const b=await fs.readFile(file);demand(b.subarray(0,5).toString()==='%PDF-','INVALID_PDF','PDFの形式が不正です。',422);let info;try{info=await this.command(this.config.pdfinfo||process.env.PDFINFO_PATH||'pdfinfo',[file]);}catch{throw fault('PDF_VALIDATION_FAILED','有効なPDFとpdfinfo（PDFINFO_PATH）の設定を確認してください。',422);}demand(/^Encrypted:\s+no\b/m.test(info.stdout)&&/^Pages:\s+[1-9]\d*\s*$/m.test(info.stdout),'INVALID_PDF','暗号化されていない、ページを持つPDFを選んでください。',422);return {mime_type:mime,duration_s:null,has_audio:false,page_count:Number(/^Pages:\s+(\d+)/m.exec(info.stdout)[1])};}
     demand(mime==='video/mp4','UNSUPPORTED_MEDIA','MP4またはPDFを指定してください。',415);
-    const p=await this.probe(file);const duration=Number(p.format?.duration);
-    demand(p.format?.format_name?.split(',').includes('mp4')&&p.streams.some(s=>s.codec_type==='video')&&Number.isFinite(duration)&&duration>0,'INVALID_VIDEO','有効なMP4動画を選んでください。',422);
-    return {mime_type:'video/mp4',duration_s:duration,has_audio:p.streams.some(s=>s.codec_type==='audio'),start_time_s:Number(p.format.start_time||0),width:p.streams.find(s=>s.codec_type==='video').width,height:p.streams.find(s=>s.codec_type==='video').height};
+    const p=await this.probe(file),timeline=videoTimeline(p),video=p.streams.find(s=>s.codec_type==='video'),containerDuration=finite(p.format?.duration);
+    demand(p.format?.format_name?.split(',').includes('mp4')&&Number.isFinite(timeline.duration_s)&&timeline.duration_s>0,'INVALID_VIDEO','有効なMP4動画を選んでください。',422);
+    return {mime_type:'video/mp4',duration_s:timeline.duration_s,container_duration_s:containerDuration,has_audio:p.streams.some(s=>s.codec_type==='audio'),start_time_s:timeline.start_time_s,width:video.width,height:video.height,video_timeline:timeline};
   }
   async register(request,mime,displayName) {
     demand(Number.isFinite(this.config.maxUploadBytes)&&this.config.maxUploadBytes>0&&Number.isFinite(this.config.minFreeBytes)&&this.config.minFreeBytes>0,'STORAGE_LIMITS_REQUIRED','受信上限と空き容量条件を設定してください。');
@@ -39,16 +61,17 @@ export class MediaTools {
   async prepare(asset,settings,runId,cleanup,signal) {
     const source=this.store.resolve(asset.asset_ref);demand(await this.store.exists(asset.asset_ref),'INPUT_UNAVAILABLE','常設動画が見つかりません。再登録してください。',404);
     demand(await hashFile(source)===asset.sha256,'INPUT_HASH_CHANGED','登録後に動画のバイトが変わっています。再登録してください。',409);
-    const versions=await this.versions();
-    if(settings.audio_enabled) return {...asset,source_sha256:asset.sha256,preprocess_version:sha256({version:'original-audio.v1',tools:versions}),transform:{version:'original-audio.v1',tools:versions,args:[]}};
+    const sourceInfo=await this.inspect(source,'video/mp4'),versions=await this.versions();
+    if(settings.audio_enabled) {const transform={version:'original-audio.v2',tools:versions,args:[],timeline_validation:'primary-video-stream.v1'};return {...asset,...sourceInfo,source_sha256:asset.sha256,preprocess_version:sha256(transform),transform};}
     const ref=`temporary/${runId}/${id()}.mp4`;await fs.mkdir(path.dirname(this.store.resolve(ref)),{recursive:true});
     const entry=await cleanup.registerLocal(ref,runId);
     const args=['-nostdin','-v','error','-i',source,'-map','0:v:0','-c:v','copy','-an','-map_metadata','-1','-map_chapters','-1','-y',this.store.resolve(ref)];
     await this.command(this.config.ffmpeg,args,signal);const info=await this.inspect(this.store.resolve(ref),'video/mp4');
-    demand(!info.has_audio&&Math.abs(info.duration_s-asset.duration_s)<=.001&&Math.abs((info.start_time_s||0)-(asset.start_time_s||0))<=.001,'PREPROCESS_TIME_CHANGED','音声除去後の時刻原点・動画長が一致しません。',422);
+    if(info.has_audio||!sameVideoTimeline(sourceInfo,info))throw fault('PREPROCESS_TIME_CHANGED','音声除去後に映像ストリームの時刻原点・動画長が変わりました。',422,{source:sourceInfo.video_timeline,submitted:info.video_timeline});
     const hash=await hashFile(this.store.resolve(ref));await cleanup.update(entry.asset_id,{content_sha256:hash,generation:'local'});
     const publicArgs=['-map','0:v:0','-c:v','copy','-an','-map_metadata','-1','-map_chapters','-1'];
-    return {...asset,asset_ref:ref,size_bytes:(await fs.stat(this.store.resolve(ref))).size,sha256:hash,source_sha256:asset.sha256,preprocess_version:sha256({version:'strip-audio.v1',tools:versions,args:publicArgs}),transform:{version:'strip-audio.v1',tools:versions,args:publicArgs},cleanup_asset_id:entry.asset_id};
+    const transform={version:'strip-audio.v2',tools:versions,args:publicArgs,timeline_validation:'primary-video-stream.v1'};
+    return {...asset,...info,asset_ref:ref,size_bytes:(await fs.stat(this.store.resolve(ref))).size,sha256:hash,source_sha256:asset.sha256,preprocess_version:sha256(transform),transform,cleanup_asset_id:entry.asset_id};
   }
   async extractFrames({asset,gt,setId,sourceId=null,exampleIds,signal}) {
     const source=this.store.resolve(asset.asset_ref),versions=await this.versions();

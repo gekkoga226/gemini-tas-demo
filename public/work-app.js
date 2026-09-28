@@ -39,7 +39,9 @@
  function filtered(){let q=$('search').value.trim().toLowerCase(),f=$('filter').value;return segs().filter(s=>(f==='all'||f==='pending'&&s.review_status!=='verified'||s.match_status===f)&&(!q||[s.action,s.object,s.location,s.tool].some(v=>v.toLowerCase().includes(q))))}
  function renderList(){
   const all=filtered(),pages=Math.max(1,Math.ceil(all.length/PAGE));state.page=Math.min(state.page,pages-1);$('listCount').textContent=`${all.length} / ${segs().length}件`;
+  const focused=$('segmentList').contains(document.activeElement)?document.activeElement.closest('.segment-row')?.dataset.segment:null;
   $('segmentList').innerHTML=all.length?all.slice(state.page*PAGE,(state.page+1)*PAGE).map(s=>`<button class="segment-row" data-segment="${esc(s.id)}" aria-current="${s.id===state.selected}"><span class="row-index">${String(segs().indexOf(s)+1).padStart(2,'0')}</span><span class="row-main"><span class="row-top"><span>${C.mmss(s.start_sec)} — ${C.mmss(s.end_sec)}</span><span>${C.pretty(C.duration(s))}</span></span><span class="row-name">${esc(s.action)}</span><span class="row-bottom">${badge(s)}${reviewBadge(s)}<span>${esc(C.activityNames[s.activity])}</span></span></span></button>`).join(''):`<div class="empty-state"><h3>${segs().length?'該当する作業はありません':'結果を表示してください'}</h3><p>${esc(segs().length?'検索・絞り込みを変更してください。':emptyText())}</p></div>`;
+  if(focused)Array.from($('segmentList').querySelectorAll('.segment-row')).find(row=>row.dataset.segment===focused)?.focus({preventScroll:true});
   $('prevPage').disabled=state.page===0;$('nextPage').disabled=state.page>=pages-1;$('pageInfo').textContent=`${state.page+1} / ${pages}`;
  }
  function renderInspector(){const s=selected();if(!s){$('inspector').innerHTML=`<div class="empty-state">${esc(emptyText())}</div>`;return}

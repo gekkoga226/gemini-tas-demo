@@ -21,10 +21,10 @@ export function renderStandardCharts(container,set,{actual=null,onSelect=()=>{}}
     <div class="chart-legend">${data.processes.map((p,i)=>`<span><i data-color="${i}"></i>${esc(p.job_no)} ${esc(p.job_title)}</span>`).join('')}</div>
     <h4>工程別の時間分布 <small>お手本の1区間ごと</small></h4><p class="hint">点を選ぶと出典の映像へ移動します。繰り返しも1件ずつ数え、工程のない動画は集計に含めません。今回の推論結果はこの分布に混ぜません。</p>
     <div class="table-scroll"><table class="analytics-table"><caption class="hint">単位：秒 ／ 分布の横軸 0〜${Number(maxSample.toFixed(2))}</caption><thead><tr><th scope="col">工程</th><th scope="col">分布</th><th scope="col">件数 / 動画数</th><th scope="col">最短</th><th scope="col">中央値</th><th scope="col">平均</th><th scope="col">最長</th></tr></thead><tbody>${data.processes.map(p=>`<tr><th scope="row">${esc(p.job_no)} ${esc(p.job_title)}</th><td class="range-cell"><span class="range-track">${p.count?`<span class="range-line" data-left="${2+p.min_s/maxSample*96}" data-width="${(p.max_s-p.min_s)/maxSample*96}"></span>${p.samples.map((sample,i)=>`<button type="button" class="range-dot" data-left="${2+sample.duration_s/maxSample*96}" data-top="${i%2?10:3}" data-source="${esc(sample.source_id)}" data-segment="${esc(sample.segment_id)}" data-job="${esc(p.job_no)}" aria-label="${esc(data.sources.find(s=>s.source_id===sample.source_id).name)}・${esc(p.job_title)} ${seconds(sample.duration_s)}を確認" title="${esc(data.sources.find(s=>s.source_id===sample.source_id).name)} ${seconds(sample.duration_s)}"></button>`).join('')}`:''}</span></td><td>${p.count} / ${p.video_count}</td><td>${seconds(p.min_s)}</td><td>${seconds(p.median_s)}</td><td>${seconds(p.mean_s)}</td><td>${seconds(p.max_s)}</td></tr>`).join('')}</tbody></table></div>
-    <h4>動画間の比較</h4><p class="hint">同じ工程の合計時間を比較します。差は「右 − 左」。工程がない側は「該当なし」、差は「—」です。</p>
+    <div class="compare-block"><h4>動画間の比較</h4><p class="hint">同じ工程の合計時間を比較します。差は「右 − 左」。工程がない側は「該当なし」、差は「—」です。</p>
     <div class="comparison-players">${['left','right'].map(side=>`<div><label>${side==='left'?'左：比較の基準':'右：比べる動画'}<select data-side="${side}">${data.sources.map(source=>`<option value="${esc(source.source_id)}">${esc(source.name)}</option>`).join('')}</select></label><video data-player="${side}" controls preload="metadata" playsinline></video><p data-media-status="${side}"></p></div>`).join('')}</div>
     <p class="analytics-detail" role="status">グラフの工程、または下の「映像で確認」を選んでください。</p>
-    <div class="table-scroll"><table class="analytics-table"><thead><tr><th scope="col">工程</th><th scope="col">左の合計 / 区間数</th><th scope="col">右の合計 / 区間数</th><th scope="col">差（右 − 左）</th><th scope="col">映像</th></tr></thead><tbody data-comparison-rows></tbody></table></div>
+    <div class="table-scroll"><table class="analytics-table"><thead><tr><th scope="col">工程</th><th scope="col">左の合計 / 区間数</th><th scope="col">右の合計 / 区間数</th><th scope="col">差（右 − 左）</th><th scope="col">映像</th></tr></thead><tbody data-comparison-rows></tbody></table></div></div>
   </section>`;
   // CSP rejects HTML style attributes. Apply calculated geometry through CSSOM.
   for(const node of container.querySelectorAll('[data-height],[data-left],[data-width],[data-top],[data-color]')) {
@@ -34,6 +34,7 @@ export function renderStandardCharts(container,set,{actual=null,onSelect=()=>{}}
   const find=selector=>container.querySelector(selector);
   const left=find('[data-side=left]'),right=find('[data-side=right]');
   right.value=data.sources.at(-1).source_id;
+  if(data.sources.length<2)find('.compare-block').hidden=true;
   function refreshComparison() {
     for(const [side,selector] of [['left',left],['right',right]]) {
       const source=data.sources.find(s=>s.source_id===selector.value),player=find(`[data-player=${side}]`),status=find(`[data-media-status=${side}]`);
@@ -42,7 +43,7 @@ export function renderStandardCharts(container,set,{actual=null,onSelect=()=>{}}
       if(source.video_available!==false)player.src=`/api/media/${encodeURIComponent(source.source_video.video_id)}/content`;else player.removeAttribute('src');
       player.onerror=()=>{status.textContent='動画を再生できません。元動画の保存状態・形式を確認してください。';player.hidden=true;};
     }
-    find('[data-comparison-rows]').innerHTML=compareStandards(data,left.value,right.value).map(p=>`<tr><th scope="row">${esc(p.job_no)} ${esc(p.job_title)}</th><td>${p.left.count?`${seconds(p.left.total_s)} / ${p.left.count}区間`:'該当なし'}</td><td>${p.right.count?`${seconds(p.right.total_s)} / ${p.right.count}区間`:'該当なし'}</td><td>${p.delta_s==null?'—':`${p.delta_s>0?'+':''}${seconds(p.delta_s)}`}</td><td><button type="button" class="table-jump" data-compare-job="${esc(p.job_no)}">映像で確認</button></td></tr>`).join('');
+    find('[data-comparison-rows]').innerHTML=left.value===right.value?'<tr><td colspan="5">同じ動画は比較できません。異なる動画を選んでください。</td></tr>':compareStandards(data,left.value,right.value).map(p=>`<tr><th scope="row">${esc(p.job_no)} ${esc(p.job_title)}</th><td>${p.left.count?`${seconds(p.left.total_s)} / ${p.left.count}区間`:'該当なし'}</td><td>${p.right.count?`${seconds(p.right.total_s)} / ${p.right.count}区間`:'該当なし'}</td><td>${p.delta_s==null?'—':`${p.delta_s>0?'+':''}${seconds(p.delta_s)}`}</td><td><button type="button" class="table-jump" data-compare-job="${esc(p.job_no)}">映像で確認</button></td></tr>`).join('');
   }
   function seekPlayer(side,source,segment) {
     const player=find(`[data-player=${side}]`);if(!segment||source.video_available===false)return;

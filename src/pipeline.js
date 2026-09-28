@@ -15,7 +15,7 @@ import {secondsToTime} from '../public/segments.js';
 export function displayAdapter(segments) {return segments.map(s=>({segment_id:s.segment_id,start_time:secondsToTime(s.start_s),end_time:secondsToTime(s.end_s),duration_seconds:Math.floor(s.end_s)-Math.floor(s.start_s),job_no:s.job_no,page_number:s.page_number,job_title:s.job_title,work_content:s.observation.operation.value??'不明',hand_movement:s.observation.operation.value??'不明',tools_and_parts:[s.observation.tools_held,s.observation.objects_parts].filter(x=>x.status==='observed').map(x=>x.value).join(', ')||'不明'}));}
 export class TasService {
   constructor(config=tasConfig(),options={}) {
-    this.config=config;this.store=options.store||new LocalStore(config.dataRoot);this.media=options.media||new MediaTools(config,this.store);
+    this.config=config;this.store=options.store||new LocalStore(config.dataRoot);this.media=options.media||new MediaTools(config,this.store);this.mediaMetadataCache=new Map();
     this.model=options.model||(config.mockMode?new MockModelAdapter(config):new GeapAdapter(config));
     this.cleanup=options.cleanup||new CleanupLedger(this.store,config,options.cloud||new GcsAdapter(config));
     this.hooks=options.hooks||{};this.lock=options.lock!==false;this.worker=null;this.controller=null;this.stopping=false;this.serial=Promise.resolve();this.ready=this.initialize();
@@ -51,7 +51,12 @@ export class TasService {
     this.controller?.signal.throwIfAborted();r.status=status;r.phase=status;r.phase_history.push({phase:status,at:now(),detail});await this.saveRun(r);await this.hooks.phase?.(r,status);
     if(r.snapshot.faults?.fail_phase===status)throw fault('MOCK_INJECTED_FAILURE','モックの故障注入です。通常条件で再試行してください。',500);
   }
-  async getMedia(assetId) {return this.store.read(`media/${safeId(assetId)}/asset.json`);}
+  async getMedia(assetId) {
+    const asset=await this.store.read(`media/${safeId(assetId)}/asset.json`);
+    if(asset.mime_type!=='video/mp4'||asset.video_timeline?.version==='primary-video-stream.v1')return asset;
+    const cacheKey=`${asset.asset_id}:${asset.sha256}`,cached=this.mediaMetadataCache.get(cacheKey);if(cached)return clone(cached);
+    const info=await this.media.inspect(this.store.resolve(asset.asset_ref),asset.mime_type),normalized={...asset,...info};this.mediaMetadataCache.set(cacheKey,normalized);return clone(normalized);
+  }
   async getSet(setId) {const set=await this.store.read(`standard-sets/${safeId(setId)}/manifest.json`);if(['ready','retired'].includes(set.status)){const published=await this.store.read(`standard-sets/${setId}/published.json`);demand(sha256({...published,content_sha256:null})===published.content_sha256&&sha256({...set,status:'ready'})===sha256(published),'SET_HASH_MISMATCH','公開標準セットの内容が変更されています。',409);}return set;}
   publicSet(s) {
     const available=STRATEGIES.filter(a=>s.status==='ready'&&s.description_profiles[profileFor(a)]&&(a!=='visual_evidence'||s.representative_images.length>0));
@@ -72,7 +77,7 @@ export class TasService {
     return view;
   }
   async sets() {const result=[];for(const k of await this.store.list('standard-sets')){const s=await this.store.read(`standard-sets/${k}/manifest.json`,null);if(s)result.push(await this.setView(s));}return result;}
-  async mediaList() {const list=[];for(const k of await this.store.list('media')){const a=await this.store.read(`media/${k}/asset.json`,null);if(a){const {asset_ref,...view}=a;list.push(view);}}return list;}
+  async mediaList() {const list=[];for(const k of await this.store.list('media')){const stored=await this.store.read(`media/${k}/asset.json`,null);if(stored){const {asset_ref,...view}=await this.getMedia(k);list.push(view);}}return list;}
   async registerVocabulary(vocabulary,discriminators,{approved_by,approved_at=now(),extraction=null}={}) {
     validateVocabulary(vocabulary);validateDiscriminators(discriminators,vocabulary);demand(approved_by,'APPROVAL_REQUIRED','語彙と識別条件の確認者を入力してください。');
     await this.store.version('vocabulary',vocabulary.vocabulary_version,sha256(vocabulary));await this.store.version('discriminators',discriminators.discriminator_version,sha256(discriminators));

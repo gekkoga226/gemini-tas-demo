@@ -10,7 +10,7 @@ const setStatusText=s=>s.status==='ready'?'公開済み':s.status==='retired'?'�
 const CLEANUP={not_needed:'対象なし',pending:'削除待ち',waiting_lease:'参照・猶予期間の終了待ち',deleting:'削除中',retry_wait:'削除失敗・再試行待ち',deleted:'削除完了',cleanup_failed:'削除が24時間以上未完了・対応が必要'};
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const costText=c=>c?.total===null||c?.total===undefined?'不明（未測定／内訳不足）':`${Number(c.total).toFixed(4)} ${c.currency??''}（${c.cost_status==='estimated'?'概算':'追加APIなし'}）`;
-export function createWorkflow({state,$,render,setStatus,toast,renderDirty,seek,applyPendingDetail}) {
+export function createWorkflow({state,$,render,setStatus,toast,renderDirty,seek,selectSegment,applyPendingDetail}) {
   let config=null,sets=[],media=[],vocabularies=[],mode='few_shot',activeRun=null,result=null,display=null,review=null,buildId=null,originalReview=[];
   let standardSegments=[],standardExamples=[],standardImages=[],lastStandardId=null,lastActualId=null,syncBusy=false;
   let vocabularyRunId=null,editor=null,submitting=false,pendingUploads=0,resultSet=null,inspectedSet=null,restoreObservedInputs=false;
@@ -24,7 +24,7 @@ export function createWorkflow({state,$,render,setStatus,toast,renderDirty,seek,
   function warnings(){const shown=state.view==='prediction'?state.prediction:state.reviewed,structural=validateSegments(shown,state.videoDuration);state.warnings=shown.map((s,i)=>[...new Set([...(structural[i]||[]),...(result?.segments.find(x=>x.segment_id===s.segment_id)?.review_reasons??[]).filter(r=>r!=='quality_warning').map(r=>`推論原本：${REVIEW_REASON_LABELS[r]}`),...(result?.warnings??[]).filter(w=>w.segment_ids.includes(s.segment_id)).map(w=>w.code==='MISSING_PROCESS'?'推論原本：工程抜けの候補があります。動画全体の確認事項を参照してください。':`推論原本：${w.message}`)])]);}
   function inputState() {
     if(!config)return;
-    const set=sets.find(s=>s.standard_set_id===$('#standardSet').value),strategy=$('#analysisStrategy').value,video=media.find(m=>m.video_id===$('#registeredVideo').value);
+    const set=effectiveSet(),strategy=$('#analysisStrategy').value,video=media.find(m=>m.video_id===$('#registeredVideo').value);
     const readiness=analysisReadiness({config,video,set,vocabulary:$('#vocabularySelect').value,mode,strategy,settings:settings(),busy:busy(),consent:$('#consentConfirmed').checked});
     $('#startButton').disabled=!readiness.ready;
     $('#inputSummary').textContent=pendingUploads?'動画をローカルへ登録・検証しています。':submitting?'分析を受け付けています。':readiness.message;
@@ -32,21 +32,26 @@ export function createWorkflow({state,$,render,setStatus,toast,renderDirty,seek,
     $('#videoMeta').textContent=pendingUploads?'ローカルへ登録・検証中':video?`選択中：${video.display_name} ／ ${secondsToTime(video.duration_s)}`:'動画はまだ選ばれていません';
     $('#videoDrop').classList.toggle('selected',Boolean(video));
     $('#vocabularyChoice').hidden=mode!=='zero_shot';
+    $('#standardChoice').hidden=mode==='zero_shot';
+    $('#referenceTitle').textContent=mode==='zero_shot'?'作業名一覧を選ぶ':'お手本を選ぶ';
+    $('#modeHelp').textContent=mode==='zero_shot'?'お手本動画は不要です。確認済みの作業名一覧と識別条件を使って対象動画を分析します。':'公開済みのお手本セットと対象動画を照合します。';
+    $('#startButton').textContent=mode==='zero_shot'?'作業の分析を開始':'お手本と照合を開始';
     const rerunCompatible=result&&sameStage1Settings(result.execution,settings())&&result.input.video_id===video?.video_id&&result.standard_set_id===(set?.standard_set_id??null)&&((result.analysis_strategy==='vocabulary_guided')===(strategy==='vocabulary_guided'));
     $('#rerunStage2').textContent=result&&!rerunCompatible?'区間分割から再分析':'同じ区間でラベルを再判定';
     $('#rerunStage2').disabled=!readiness.ready||!result;
-    $('#inputNotice').textContent=config.mode==='mock'?'合成モック：動画はこのPCに保存します。外部通信はありません。結果・使用量は合成データです。':`送信先：Google Cloud / ${config.settings.project} / ${config.settings.location}。動画1本を送信します。${strategy==='visual_evidence'?`照合時も実動画${mode==='few_shot'?`とお手本の代表画像${set?.representative_images.length??0}枚`:''}を使用します。`:'同じ区間の再判定は文章のみです。'} 業務精度・長時間性能・費用は未検証です。`;
+    $('#inputNotice').textContent=config.mode==='mock'?'合成モック：動画はこのPCに保存します。外部通信はありません。映像は解析されず、区間・ラベル・使用量は固定パターンの合成データです（精度確認には使えません）。':`送信先：Google Cloud / ${config.settings.project} / ${config.settings.location}。動画1本を送信します。${strategy==='visual_evidence'?`照合時も実動画${mode==='few_shot'?`とお手本の代表画像${set?.representative_images.length??0}枚`:''}を使用します。`:'同じ区間の再判定は文章のみです。'} 業務精度・長時間性能・費用は未検証です。`;
     $('#settingsSummary').textContent=`モデル：${config.settings.stage1_model??'未設定'} / ${config.settings.stage2_model??'未設定'}\n音声：${settings().audio_enabled?'あり':'なし（音声トラックを除去）'} / FPS：${settings().fps} / ${settings().processing_mode}\n${state.running?'実行中の設定は固定されています。変更は次回の実行に適用します。':''}`;
-    $('#pdfMeta').textContent=set?`${set.name} ／ ${setStatusText(set)} ／ お手本${set.sources?.length??1}本・代表画像${set.representative_images.length}枚`:'お手本は「お手本を登録・確認」から準備できます。';
+    $('#pdfMeta').textContent=mode==='zero_shot'?(set?`${set.name}の確認済み作業名一覧を使います。お手本の記述・画像は送信しません。`:$('#vocabularySelect').value?'確認済みの作業名一覧を使います。お手本の記述・画像は送信しません。':'作業名一覧がなければ「お手本を登録・確認」から語彙・識別条件を登録してください。'):set?`${set.name} ／ ${setStatusText(set)} ／ お手本${set.sources?.length??1}本・代表画像${set.representative_images.length}枚`:'公開済みのお手本がありません。「お手本を登録・確認」からセットを作成・公開してください。';
     editor?.update();
   }
+  function effectiveSet(){const selected=sets.find(s=>s.standard_set_id===$('#standardSet').value);return mode==='zero_shot'&&($('#vocabularySelect').value||selected?.status!=='ready')?null:selected;}
   function fillSelect(el,items,valueKey,text,empty='選択してください') {const previous=el.value;el.replaceChildren(new Option(empty,''),...items.map(x=>new Option(text(x),x[valueKey])));if(items.some(x=>x[valueKey]===previous))el.value=previous;}
   async function refreshInputs() {
     const priorAssets=JSON.stringify([media.map(m=>m.video_id),vocabularies.map(v=>v.ref)]);
     const [a,b,c]=await Promise.all([api('/api/standard-sets'),api('/api/media'),api('/api/vocabularies')]);sets=a.standard_sets;media=b.media.filter(a=>a.mime_type==='video/mp4');vocabularies=c.vocabularies;
     fillSelect($('#standardSet'),sets.filter(s=>s.status!=='retired'),'standard_set_id',s=>`${s.name}（${setStatusText(s)}）`);
     fillSelect($('#registeredVideo'),media,'video_id',m=>m.display_name);fillSelect($('#librarySet'),sets,'standard_set_id',s=>`${s.name}（${setStatusText(s)}・${s.sources?.length??1}本）`,'新しいセットを作成');
-    fillSelect($('#vocabularySelect'),vocabularies,'ref',v=>v.vocabulary.vocabulary_version,'標準セットの語彙を使用');fillSelect($('#buildVocabulary'),vocabularies,'ref',v=>v.vocabulary.vocabulary_version);if(priorAssets!==JSON.stringify([media.map(m=>m.video_id),vocabularies.map(v=>v.ref)]))editor?.refresh();inputState();
+    fillSelect($('#vocabularySelect'),vocabularies,'ref',v=>v.vocabulary.vocabulary_version,'選択してください');fillSelect($('#buildVocabulary'),vocabularies,'ref',v=>v.vocabulary.vocabulary_version);if(priorAssets!==JSON.stringify([media.map(m=>m.video_id),vocabularies.map(v=>v.ref)]))editor?.refresh();inputState();
   }
   async function uploadVideo(file) {
     if(!file||file.size===0||!file.name.toLowerCase().endsWith('.mp4'))throw new Error('0バイトではないMP4動画を選んでください。');
@@ -70,8 +75,8 @@ export function createWorkflow({state,$,render,setStatus,toast,renderDirty,seek,
     inputState();if($('#startButton').disabled)return;
     submitting=true;inputState();
     try {
-    const strategy=$('#analysisStrategy').value,compatible=result&&sameStage1Settings(result.execution,settings())&&((strategy==='vocabulary_guided')===(result.analysis_strategy==='vocabulary_guided'))&&result.input.video_id===$('#registeredVideo').value&&result.standard_set_id===($('#standardSet').value||null);
-    const request={client_request_id:crypto.randomUUID(),input_video_id:$('#registeredVideo').value,standard_set_id:$('#standardSet').value||null,vocabulary_ref:$('#standardSet').value?null:$('#vocabularySelect').value,discriminator_ref:null,analysis_strategy:strategy,analysis_mode:mode,settings:settings(),stage1_artifact_id:reuse&&compatible?result.stage1.artifact_id:null,parent_run_id:reuse&&result?result.run_id:null,comparison_session_id:null,consent_confirmed:$('#consentConfirmed').checked};
+    const strategy=$('#analysisStrategy').value,set=effectiveSet(),compatible=result&&sameStage1Settings(result.execution,settings())&&((strategy==='vocabulary_guided')===(result.analysis_strategy==='vocabulary_guided'))&&result.input.video_id===$('#registeredVideo').value&&result.standard_set_id===(set?.standard_set_id??null);
+    const request={client_request_id:crypto.randomUUID(),input_video_id:$('#registeredVideo').value,standard_set_id:set?.standard_set_id??null,vocabulary_ref:set?null:$('#vocabularySelect').value,discriminator_ref:null,analysis_strategy:strategy,analysis_mode:mode,settings:settings(),stage1_artifact_id:reuse&&compatible?result.stage1.artifact_id:null,parent_run_id:reuse&&result?result.run_id:null,comparison_session_id:null,consent_confirmed:$('#consentConfirmed').checked};
     if(state.dirty||state.formDirty)await persistReview(false);
     const r=await api('/api/analysis-runs',request);localStorage.setItem('tas-active-run',r.run_id);await observe(r.run_id);
     }finally{submitting=false;inputState();}
@@ -79,7 +84,7 @@ export function createWorkflow({state,$,render,setStatus,toast,renderDirty,seek,
   const observe=createRunObserver({
     read:observeOnce,
     onConnected:()=>{$('#connectionStatus').textContent='画面の接続：正常';},
-    onError:(error,failures)=>{$('#connectionStatus').textContent=failures?`画面の接続が途切れています（${failures}回）。最後の状態を表示中。自動で再確認します。`:'前回の実行がこの保存先に見つかりません。実行履歴から選び直してください。';}
+    onError:(error,failures)=>{$('#connectionStatus').textContent=failures?`画面の接続が途切れています（${failures}回）。最後の状態を表示中。自動で再確認します。サーバー上の処理状態は未確認です。`:'前回の実行がこの保存先に見つかりません。実行履歴から選び直してください。';}
   });
   async function observeOnce(runId,isCurrent) {
     const r=await api(`/api/analysis-runs/${runId}`);
@@ -92,6 +97,9 @@ export function createWorkflow({state,$,render,setStatus,toast,renderDirty,seek,
     const phaseDetail=r.phase_history?.at(-1)?.detail;
     $('#activeRunSummary').textContent=`${r.job_kind==='standard_build'?`お手本セットの作成${phaseDetail?.source_index?`：${phaseDetail.source_index} / ${phaseDetail.source_count}本目`:''}`:r.job_kind==='vocabulary_extract'?'作業名一覧の抽出':`対象：${media.find(m=>m.video_id===r.input_video_id)?.display_name??r.input_video_id} ／ ${STRATEGIES[r.analysis_strategy]??''}`} ／ 受付 ${new Date(r.created_at).toLocaleString()}`;
     $('#resultLink').hidden=!r.result_available;
+    $('#resultLink').textContent=r.result_available?'未確認区間から結果を見る →':'結果を確認';
+    $('#retryRun').hidden=!['failed','cancelled','interrupted'].includes(r.status);
+    $('#retryRun').dataset.runId=runId;
     $('#cleanupStatus').dataset.pending=String(presentation.observe_cleanup);
     $('#cleanupStatus').textContent=`一時媒体：${CLEANUP[r.cleanup.cleanup_status]}${r.remote_outcome_unknown?' ／ リモート結果不明・猶予リースあり':''}`;
     if(r.job_kind==='standard_build'&&r.status==='awaiting_approval'){buildId=r.standard_set_id;await refreshInputs();$('#standardSet').value=buildId;$('#setManager').hidden=false;if(inspectedSet?.standard_set_id!==buildId||!inspectedSet.approval_available)await inspectSet(buildId);}
@@ -116,13 +124,20 @@ export function createWorkflow({state,$,render,setStatus,toast,renderDirty,seek,
     state.predictionWarnings=result.segments.map(s=>s.review_reasons.map(k=>REVIEW_REASON_LABELS[k]));state.warnings=structuredClone(state.predictionWarnings);state.selected=0;state.view='reviewed';state.undoStack=[];state.redoStack=[];state.dirty=false;state.currentTime=0;state.timestamp=result.created_at;$('#workspace').hidden=false;
     standardExamples=set?.examples?.[result.analysis_strategy==='vocabulary_guided'?'guided':'unguided']??[];standardImages=set?.representative_images??[];
     const sources=standardSources(set);fillSelect($('#standardSource'),sources,'source_id',s=>s.name,'お手本を選択');$('#standardSource').value=sources[0]?.source_id??'';chooseResultSource();
-    renderStandardCharts($('#resultAnalytics'),set??{sources:[],vocabulary:{labels:[]},provenance:{synthetic:result.mock},status:'ready'},{actual:result,onSelect:(source,segment)=>{if(source.kind==='standard'){$('#standardSource').value=source.source_id;chooseResultSource();$('#standardPlayer').currentTime=segment.start_s;render();}else seek(segment.start_s);}});
+    const hasComparison=Boolean(result.examples_used&&set&&sources.length);
+    $('#workspace').classList.toggle('is-zero',!hasComparison);
+    $('#resultHeading').textContent=hasComparison?'お手本と対象の区間を確認':'対象動画の区間を確認';
+    $('#reviewStartText').textContent=hasComparison?'上段がお手本、下段が対象です。時間軸は実時間で、同じJob No.の工程先頭へ移動します。再生は個別です。':'お手本を使わない分析です。対象動画と観察根拠を確認してください。';
+    $('#resultAnalyticsDisclosure').hidden=!hasComparison;
+    if(hasComparison)renderStandardCharts($('#resultAnalytics'),set,{actual:result,onSelect:(source,segment)=>{if(source.kind==='standard'){$('#standardSource').value=source.source_id;chooseResultSource();$('#standardPlayer').currentTime=segment.start_s;render();}else seek(segment.start_s);}});
+    else $('#resultAnalytics').replaceChildren();
     $('#standardInferenceNotice').textContent=result.examples_used?'上段：公開済み標準セットのお手本。実作業GTは表示しません。':'お手本なし：上段は表示用です。標準記述・標準画像は推論へ送信していません。';
     $('#reviewHistory').textContent=reviews.length?`修正履歴 ${reviews.length}件 ／ 最終確認：${review.editor} ／ ${new Date(review.created_at).toLocaleString()}`:'人による確認はまだ保存されていません。';
     if(restoreInputs){$('#standardSet').value=result.standard_set_id??'';$('#registeredVideo').value=result.input.video_id;$('#analysisStrategy').value=result.analysis_strategy;$('#consentConfirmed').checked=false;mode=result.analysis_mode;restoreSettings(result.execution);}
     modeTabs();render();
   }
   function chooseResultSource() {
+    if(result&&!result.examples_used){standardSegments=[];state.standardDuration=0;$('#standardPlayer').pause();$('#standardPlayer').removeAttribute('src');$('#standardPlayer').hidden=true;return;}
     const source=standardSources(resultSet).find(s=>s.source_id===$('#standardSource').value);
     standardSegments=source?.display_segments??[];state.standardDuration=source?.source_video.duration_s??0;lastStandardId=null;lastActualId=null;
     const player=$('#standardPlayer');player.pause();
@@ -130,7 +145,7 @@ export function createWorkflow({state,$,render,setStatus,toast,renderDirty,seek,
     $('#syncStatus').textContent=source?.video_available===false?'お手本動画が見つかりません。集計と出典は保持しています。':'同じ作業名の区間へ移動します。独立再生も選べます。';
   }
   function restoreSettings(s){$('#processingMode').value=s.processing_mode;$('#inputFps').value=s.fps;$('#audioEnabled').checked=s.audio_enabled;$('#promptRelease').value=s.prompt_release;}
-  function modeTabs(){for(const [sel,value]of [['#fewShotTab','few_shot'],['#zeroShotTab','zero_shot']]){const active=mode===value;$(sel).classList.toggle('active',active);$(sel).setAttribute('aria-selected',String(active));}inputState();}
+  function modeTabs(){for(const [sel,value]of [['#fewShotTab','few_shot'],['#zeroShotTab','zero_shot']]){const active=mode===value;$(sel).classList.toggle('active',active);$(sel).setAttribute('aria-pressed',String(active));}inputState();}
   function exactReviewed() {
     return state.reviewed.map(s=>{const original=originalReview.find(x=>x.segment_id===s.segment_id)??result.segments.find(x=>x.segment_id===s.segment_id);return {segment_id:s.segment_id??(s.segment_id=`human-${crypto.randomUUID()}`),start_s:original&&s.start_time===secondsToTime(original.start_s)?original.start_s:timeToSeconds(s.start_time),end_s:original&&s.end_time===secondsToTime(original.end_s)?original.end_s:timeToSeconds(s.end_time),job_no:s.job_no,job_title:s.job_title,page_number:s.page_number};});
   }
@@ -139,10 +154,15 @@ export function createWorkflow({state,$,render,setStatus,toast,renderDirty,seek,
   function extras() {
     if(!result)return;
     $('#globalWarnings').textContent=(result.warnings??[]).filter(w=>w.code==='MISSING_PROCESS').map(w=>`動画全体の確認事項（推論原本）：${w.message}`).join('\n');
+    $('#mockResultWarning').hidden=!result.mock;
     $('#resultIdentity').textContent=`${result.mock?'合成モック結果 ／ ':''}${STRATEGIES[result.analysis_strategy]} ／ ${result.examples_used?'お手本あり':'お手本なし'} ／ ${result.segments.filter(s=>s.review_required).length}区間が要確認 ／ 費用：${costText(result.metrics_runtime.cost)}`;
+    const pending=result.segments.filter(s=>s.review_required).length;
+    $('#firstPending').textContent=pending?`要確認 ${pending}区間から見る`:'先頭区間を見る';
     const container=$('#standardTimelineSegments');container.replaceChildren();const axis=Math.max(state.videoDuration,state.standardDuration||0);
     standardSegments.forEach((s,i)=>{const b=document.createElement('button');b.type='button';b.className='standard-segment';b.style.left=`${s.start_s/axis*100}%`;b.style.width=`${(s.end_s-s.start_s)/axis*100}%`;b.textContent=`標準 ${i+1}`;b.title=`${s.job_title} ${s.start_s}–${s.end_s}秒`;b.addEventListener('click',e=>{e.stopPropagation();$('#standardPlayer').currentTime=s.start_s;syncFrom('standard',s);});container.append(b);});
     const shown=(state.view==='prediction'?state.prediction:state.reviewed)[state.selected],s=result.segments.find(x=>x.segment_id===shown?.segment_id);const panel=$('#evidencePanel');
+    const standardMatch=shown&&result.examples_used?matchingSegment(standardSegments,shown.job_no,$('#standardPlayer').currentTime):null;
+    $('#selectedComparison').textContent=shown?`対象 ${shown.start_time}〜${shown.end_time} ／ Job ${shown.job_no} ${shown.job_title}${result.examples_used?standardMatch?`。お手本 ${secondsToTime(standardMatch.start_s)}〜${secondsToTime(standardMatch.end_s)} ／ Job ${standardMatch.job_no} ${standardMatch.job_title}。工程先頭へ移動し、再生は個別です。`:'。お手本に対応する工程はありません。':''}`:'';
     const form=$('#detailForm');if(form&&state.view==='reviewed'&&!state.formDirty)labelSelector(form,shown.job_no);
     if(!s){panel.textContent='人が追加した区間です。推論候補はありません。';return;}
     panel.innerHTML=`<h3>候補・観察根拠</h3><p>${s.review_required?'要確認':'確認対象外（人の承認ではありません）'}：${s.review_reasons.map(k=>esc(k==='quality_warning'?'動画全体・区間の確認事項あり（具体的な説明を参照）':REVIEW_REASON_LABELS[k])).join(' ／ ')||'確認理由なし'}</p><p>生の確信度 ${s.confidence_raw.toFixed(2)} ／ 表示用 ${s.confidence.toFixed(2)}${s.forced_low_confidence?' ／ 同着による強制低下':''}</p><p>${esc(s.adoption_reason)}</p><ul>${s.candidates.map(c=>`<li><strong>${esc(c.job_no)} ${esc(c.job_title)} ／ ${c.score.toFixed(2)}</strong><p>${esc(c.reason)}</p></li>`).join('')}</ul><details><summary>採用根拠の参照</summary><pre>${esc(JSON.stringify(s.evidence_refs,null,2))}</pre></details><details><summary>共通Observationの全項目</summary><pre>${esc(JSON.stringify(s.observation,null,2))}</pre></details>`;
@@ -181,9 +201,13 @@ export function createWorkflow({state,$,render,setStatus,toast,renderDirty,seek,
   async function openLibrary() {$('#setManager').hidden=false;if($('#standardSet').value)await inspectSet($('#standardSet').value);$('#setManagerTitle').focus();$('#setManager').scrollIntoView({block:'start'});}
   async function readFile(input){const file=$(input).files[0];if(!file)throw new Error('必要なJSONファイルを選択してください。');return JSON.parse(await file.text());}
   async function initialize() {
-    state.session=await api('/api/session');config=await api('/api/config');$('#modeBadge').textContent=config.mode==='mock'?'合成モック · 外部通信なし':'Google Cloud · 業務精度は未検証';$('#demoInputButton').hidden=config.mode!=='mock';await refreshInputs();await history();
+    state.session=await api('/api/session');config=await api('/api/config');$('#modeBadge').textContent=config.mode==='mock'?'合成モック · 映像は解析しません':'Google Cloud · 業務精度は未検証';$('#demoInputButton').hidden=config.mode!=='mock';await refreshInputs();await history();
     editor=createStandardEditor({$,api,uploadVideo,getMedia:()=>media,getVocabularies:()=>vocabularies,settings,getConfig:()=>config,getBusy:busy,onBusy:value=>{pendingUploads+=value?1:-1;inputState();},onCreated:async run=>{buildId=run.standard_set_id;localStorage.setItem('tas-active-run',run.run_id);await observe(run.run_id);}});editor.reset();$('.approval-area').hidden=true;$('#pdfDestination').textContent=config.mode==='mock'?'合成モック：PDFはこのPCに保存します。外部通信はありません。':`送信先：Google Cloud / ${config.settings.project} / ${config.settings.location}。標準書PDFを送信して作業名を抽出します。`;inputState();
     $('#rerunStage2').addEventListener('click',safely(()=>start(true)));$('#saveReviewButton').addEventListener('click',safely(()=>persistReview()));$('#refreshHistory').addEventListener('click',safely(history));
+    $('#retryRun').addEventListener('click',safely(async()=>{const id=$('#retryRun').dataset.runId;if(!id)return;const n=await api(`/api/analysis-runs/${id}/retry`,{client_request_id:crypto.randomUUID()});await observe(n.run_id);}));
+    const beginReview=()=>{const index=result?.segments.findIndex(s=>s.review_required)??-1;selectSegment(Math.max(0,index));$('#segmentList .segment-row.selected')?.focus({preventScroll:true});$('#workspace').scrollIntoView({block:'start'});};
+    $('#firstPending').addEventListener('click',beginReview);
+    $('#resultLink').addEventListener('click',event=>{if(!result)return;event.preventDefault();beginReview();});
     $('#extractVocabulary').addEventListener('click',safely(async()=>{if(!$('#pdfConsent').checked)throw new Error('標準書の送信範囲を確認してください。');const file=$('#vocabularyPdf').files[0];if(!file)throw new Error('標準書PDFを選択してください。');const response=await fetch('/api/media',{method:'POST',headers:{'content-type':'application/pdf','x-display-name':encodeURIComponent(file.name),'x-local-token':state.session.token},body:file});const pdf=await response.json();if(!response.ok)throw new Error(pdf.message);const run=await api('/api/vocabulary-extractions',{client_request_id:crypto.randomUUID(),pdf_asset_id:pdf.asset_id,settings:settings(),consent_confirmed:$('#pdfConsent').checked});await observe(run.run_id);}));
     $('#approveVocabulary').addEventListener('click',safely(async()=>{const vocabulary=JSON.parse($('#draftVocabulary').value),discriminators=JSON.parse($('#draftDiscriminators').value);discriminators.approved_by=$('#setReviewer').value;discriminators.approved_at=new Date().toISOString();const v=await api(`/api/vocabulary-extractions/${vocabularyRunId}/approve`,{vocabulary,discriminators,approved_by:$('#setReviewer').value});await refreshInputs();$('#buildVocabulary').value=v.ref;editor?.refresh();$('#vocabularyDraft').hidden=true;await history();toast('標準書の語彙と識別条件を確認済みとして登録しました。');}));
     $('#fewShotTab').addEventListener('click',()=>{mode='few_shot';modeTabs();});$('#zeroShotTab').addEventListener('click',()=>{mode='zero_shot';modeTabs();});

@@ -123,7 +123,10 @@ test('stored pipeline result opens in the new contract without mutating inferenc
   assert.ok(review.modes.few.segments.filter(s => !s.standard_id).every(s => s.match_status === 'uncertain'));
   assert.ok(!JSON.stringify(review).includes('build_only_gt'));
   assert.equal(sha256(await service.result(run.run_id)), originalHash);
-  for (const url of ['/', '/analysis.html', '/work-styles.css', '/work-core.js', '/work-app.js']) {
+  const home = await fetch(base + '/', { redirect: 'manual' });
+  assert.equal(home.status, 302);
+  assert.equal(home.headers.get('location'), '/analysis.html?new=1');
+  for (const url of ['/review.html', '/analysis.html', '/work-styles.css', '/work-core.js', '/work-app.js']) {
     const page = await fetch(base + url); assert.equal(page.status, 200);
     assert.ok(page.headers.get('content-security-policy').includes("script-src 'self'"));
     assert.ok(!page.headers.get('content-security-policy').includes('unsafe-inline'));

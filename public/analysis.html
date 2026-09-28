@@ -9,7 +9,7 @@
 </head>
 <body>
   <a class="analysis-skip" href="#inputTitle">分析の入力へ</a>
-  <nav class="work-return" aria-label="ワークスペース"><a class="analysis-brand" href="/"><img src="/work-mark.svg" alt="" width="24" height="24">作業みえる</a><a href="#inputTitle">新しい分析</a><button id="openLibrary" type="button">お手本ライブラリ</button><a href="#historyTitle">実行履歴</a><a href="/">作業レビュー</a></nav>
+  <nav class="work-return" aria-label="ワークスペース"><a class="analysis-brand" href="/"><img src="/work-mark.svg" alt="" width="24" height="24">作業みえる</a><a href="#inputTitle">新しい分析</a><button id="openLibrary" type="button">お手本ライブラリ</button><a href="#historyTitle">実行履歴</a><a href="/review.html">作業レビュー</a></nav>
   <header class="app-header">
     <div class="brand-lockup">
       <span class="brand-signal" aria-hidden="true"><i></i><i></i><i></i></span>
@@ -34,9 +34,9 @@
           <label class="drop-zone" id="videoDrop"><input id="videoInput" type="file" accept="video/mp4,.mp4"><span class="file-kind">＋</span><strong>新しい動画を登録</strong><span>MP4を選ぶ・ドロップ</span></label>
           <div class="registered-choice"><label for="registeredVideo">登録済み動画から選ぶ</label><select id="registeredVideo"><option value="">動画を選択</option></select><p id="videoMeta" role="status">動画はまだ選ばれていません</p></div>
         </div>
-        <div class="section-heading input-step"><div class="heading-copy"><span class="step">2</span><div><h2>お手本を選ぶ</h2><p class="section-caption">同じ作業のお手本をまとめた「標準セット」を使います。</p></div></div><button id="manageSets" class="icon-button" type="button">お手本を登録・確認</button></div>
-        <div class="view-tabs" role="tablist" aria-label="お手本の有無"><button id="fewShotTab" class="tab active" role="tab" aria-selected="true" type="button">お手本と照合</button><button id="zeroShotTab" class="tab" role="tab" aria-selected="false" type="button">お手本なしで分析</button></div>
-        <div class="form-grid"><label>標準セット<select id="standardSet"><option value="">選択してください</option></select></label><label id="vocabularyChoice" hidden>確認済み語彙<select id="vocabularySelect"><option value="">標準セットの語彙を使用</option></select></label></div><p id="pdfMeta" class="hint">標準セット未選択</p>
+        <div class="section-heading input-step"><div class="heading-copy"><span class="step">2</span><div><h2 id="referenceTitle">照合方法を選ぶ</h2><p id="modeHelp" class="section-caption">公開済みのお手本と対象動画を照合します。</p></div></div><button id="manageSets" class="icon-button" type="button">お手本を登録・確認</button></div>
+        <div class="view-tabs" role="group" aria-label="分析の目的"><button id="fewShotTab" class="tab active" aria-pressed="true" type="button">お手本と照合</button><button id="zeroShotTab" class="tab" aria-pressed="false" type="button">お手本なしで分析</button></div>
+        <div class="form-grid"><label id="standardChoice">公開済み標準セット<select id="standardSet"><option value="">選択してください</option></select></label><label id="vocabularyChoice" hidden>確認済みの作業名一覧<select id="vocabularySelect"><option value="">選択してください</option></select></label></div><p id="pdfMeta" class="hint">標準セット未選択</p>
         <label class="strategy-label" for="analysisStrategy">分析方式（精度比較用）</label>
         <select id="analysisStrategy"><option value="text_only">案1：項目化した文章照合</option><option value="vocabulary_guided">案2：語彙補助の文章照合</option><option value="visual_evidence">案3：映像根拠併用</option></select>
         <details class="settings-panel"><summary>詳細設定・方式の違い</summary><p class="hint">同じ動画・お手本・設定で方式を比較できます。案1と案3は同じ区間分割を再利用し、案2は区間分割からやり直します。案3の再判定には動画と必要な代表画像を送信します。</p><div class="form-grid"><label>処理モード<select id="processingMode"><option value="AGENTIC">agentic（要求値）</option><option value="STATIC">static</option></select></label><label>入力FPS<input id="inputFps" type="number" min="0.01" max="24" step="0.01" value="1"></label><label><input id="audioEnabled" type="checkbox">音声を含める</label><label>プロンプト版<select id="promptRelease"><option value="round18.v1">Round 18 / v1</option></select></label></div><pre id="settingsSummary"></pre></details>
@@ -48,22 +48,23 @@
         <label class="consent"><input id="consentConfirmed" type="checkbox">作業者の同意を取得済みです</label>
         <p class="hint">結果は人が映像で確認し、人事評価や処遇に直結させないでください。</p>
         <p id="inputSummary" role="status">動画を選んでください。</p>
-        <button id="startButton" class="button primary" type="button" aria-describedby="inputSummary" disabled>分析を開始</button>
+        <button id="startButton" class="button primary" type="button" aria-describedby="inputSummary" disabled>お手本と照合を開始</button>
         <button id="cancelButton" class="button danger" type="button" hidden>実行中の処理を中止</button>
         <button id="rerunStage2" class="button secondary" type="button" disabled>同じ区間でラベルを再判定</button>
-        <a id="resultLink" class="button secondary" href="#workspace" hidden>完了した結果を確認 →</a>
+        <a id="resultLink" class="button secondary" href="#workspace" hidden>未確認区間から結果を見る →</a>
       </aside>
     </div>
 
-    <section class="card status-card" aria-live="polite" aria-atomic="true">
+    <section class="card status-card" aria-label="分析の状態">
       <div class="status-main">
         <span id="statusDot" class="status-dot idle"></span>
-        <div><small>解析状態</small><strong id="statusText">待機中</strong></div>
+        <div><small>解析状態</small><strong id="statusText" role="status" aria-live="polite">待機中</strong></div>
       </div>
       <div class="status-time"><small>経過時間</small><strong id="elapsedText">00:00</strong></div>
       <p id="activeRunSummary" class="active-run-summary"></p>
-      <p id="statusMessage">入力を準備してください。</p>
+      <p id="statusMessage" role="status" aria-live="polite">入力を準備してください。</p>
       <p id="connectionStatus" class="hint" role="status"></p><p id="cleanupStatus">一時媒体：対象なし</p>
+      <button id="retryRun" class="button secondary" type="button" hidden>保存済み入力から新しい実行で再試行</button>
     </section>
 
     <section id="setManager" class="card input-card" hidden aria-labelledby="setManagerTitle">
@@ -87,14 +88,14 @@
 
     <section class="card history-card" aria-labelledby="historyTitle"><div class="section-heading"><div><p class="section-kicker">HISTORY</p><h2 id="historyTitle">実行履歴</h2></div><button id="refreshHistory" class="icon-button" type="button">更新</button></div><p class="hint">ブラウザを閉じてもサーバーが動いていれば処理は続きます。PC停止後はここから状態を確認してください。</p><div id="historyList" class="history-list"></div></section>
 
-    <section id="workspace" class="workspace" hidden>
-      <section id="resultAnalytics" class="card result-analytics"></section>
+    <section id="workspace" class="workspace" hidden aria-label="分析結果と区間の確認">
+      <div class="result-start card"><div><strong id="resultHeading">動画と区間を確認</strong><p id="reviewStartText">映像・時間軸・根拠を見ながら確認してください。</p></div><button id="firstPending" class="button primary" type="button">最初の要確認区間へ</button></div>
       <section class="card media-card">
-        <div class="section-heading compact"><h2>お手本動画</h2><label><input id="syncPlayback" type="checkbox" checked>区間同期</label></div>
+        <div id="standardMediaSection"><div class="section-heading compact"><h2>お手本動画</h2><label><input id="syncPlayback" type="checkbox" checked>区間同期</label></div>
         <label>比較するお手本<select id="standardSource"></select></label>
         <p id="standardInferenceNotice" class="hint"></p>
         <div class="video-shell"><video id="standardPlayer" controls preload="metadata"></video></div>
-        <p id="syncStatus" class="hint">同じJob No.の区間へ移動します。チェックを外すと独立再生できます。</p>
+        <p id="syncStatus" class="hint">同じJob No.の区間へ移動します。チェックを外すと独立再生できます。</p></div>
         <div class="section-heading compact"><div class="heading-copy"><span class="step">02</span><div><p class="section-kicker">VIDEO</p><h2>作業動画</h2><p class="section-caption">映像の内容を確認します。時刻の移動と区間編集は下のタイムラインで行います。</p></div></div></div>
         <div class="video-shell">
           <video id="videoPlayer" controls preload="metadata"></video>
@@ -108,7 +109,8 @@
 
       <section class="card timeline-card" aria-labelledby="timelineTitle">
         <div class="section-heading compact timeline-heading"><div><p class="section-kicker">TIMELINE</p><h2 id="timelineTitle">作業タイムライン</h2><p class="section-caption">現在位置と作業区間を同じ時間軸で確認し、必要な範囲を拡大して編集します。</p></div></div>
-        <div id="resultIdentity" class="notice neutral"></div><p id="globalWarnings" class="warning-list"></p>
+         <div id="resultIdentity" class="notice neutral"></div><div id="mockResultWarning" class="notice warning mock-result-warning" role="note" hidden><strong>この結果は動画を解析していません（合成モック）。</strong>モックは動画の長さを均等に区切り、作業名一覧のラベルを順番に割り当てる動作確認用の固定パターンです。ラベルの正誤からモデル・プロンプトの精度は判断できません。実映像の判定は実接続モード（<code>start-app-real.bat</code>）で起動して行ってください。</div><p id="globalWarnings" class="warning-list"></p>
+         <p id="selectedComparison" class="selected-comparison" role="status"></p>
         <div class="playback-meta">
           <div class="time-readout"><small>現在時刻 / 全体</small><strong id="playbackTime">00:00:00 / 00:00:30</strong></div>
           <div class="active-readout"><span class="current-dot" aria-hidden="true"></span><div><small>現在位置の作業</small><strong id="activeSegmentLabel">該当する作業区間なし</strong></div></div>
@@ -145,11 +147,11 @@
           <button id="undoButton" class="icon-button" type="button" disabled>↶ Undo</button>
           <button id="redoButton" class="icon-button" type="button" disabled>↷ Redo</button>
         </div>
+        <div id="evidencePanel" class="evidence-panel"></div>
         <div id="segmentList" class="segment-list"></div>
         <div id="detailPanel" class="detail-panel">
           <p class="empty-state">区間を選択してください。</p>
         </div>
-        <div id="evidencePanel" class="evidence-panel"></div>
       </section>
 
       <section class="card output-card">
@@ -161,6 +163,7 @@
         <label>確認・修正の担当者<input id="reviewEditor" value="ローカル確認者"></label><button id="saveReviewButton" class="button secondary" type="button">修正を履歴に保存</button>
         <p id="reviewHistory" class="hint"></p><p class="hint">確認済みJSONにもAI原本全体を original_result として同梱します（方式・入力ハッシュ・版・共有元・候補と根拠・モック表示）。修正後の区間は segments、確認者・日時・変更内容も保存します。候補と根拠はAI原本の記録です。推論原本は上書きしません。</p>
       </section>
+      <details id="resultAnalyticsDisclosure" class="card result-analytics"><summary>時間内訳と集計を見る</summary><section id="resultAnalytics"></section></details>
     </section>
   </main>
 
