@@ -1,7 +1,7 @@
 import {summarizeStandards,compareStandards} from './standard-analytics.js';
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const seconds=n=>n==null?'—':`${Number(n.toFixed(2))}秒`;
-const COLORS=['#3d65b0','#36877a','#b07836','#8065a6','#527c98','#a55465','#698541','#56647a'];
+const COLORS=['#3d65b0','#327e71','#97672e','#8065a6','#4e7690','#a55465','#617a3c','#56647a'];
 
 export function renderStandardCharts(container,set,{actual=null,onSelect=()=>{}}={}) {
   const data=summarizeStandards(set,actual);

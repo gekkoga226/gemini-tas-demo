@@ -362,10 +362,10 @@ h2 {
 .status-card {
   display: grid;
   grid-template-columns: auto auto 1fr;
-  gap: 24px;
+  gap: 10px 24px;
   align-items: center;
   min-height: 72px;
-  margin: 14px 0;
+  margin: var(--gap-section) 0 0;
   padding: 14px 18px;
   background: #101419;
   box-shadow: none;
@@ -383,7 +383,6 @@ h2 {
   gap: 1px;
 }
 
-.status-card small,
 .playback-meta small {
   color: #87929d;
   font-size: 9px;
@@ -391,13 +390,20 @@ h2 {
   letter-spacing: .12em;
 }
 
+.status-card small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .04em;
+}
+
 .status-card p {
   margin: 0;
-  padding-left: 22px;
-  border-left: 1px solid var(--line);
   color: var(--muted);
   font-size: 13px;
 }
+
+.status-card p:empty { display: none; }
 
 .status-dot {
   width: 10px;
@@ -434,6 +440,7 @@ h2 {
 
 .workspace {
   display: grid;
+  margin-top: var(--gap-section);
   grid-template-columns: minmax(0, 1.42fr) minmax(360px, .88fr);
   grid-template-areas:
     "timeline timeline"
@@ -975,6 +982,7 @@ kbd {
 
 .icon-button {
   padding: 8px 11px;
+  border: 1px solid var(--line-strong);
   font-size: 12px;
 }
 
@@ -1151,6 +1159,14 @@ kbd {
 }
 
 .form-grid .wide { grid-column: 1 / -1; }
+
+/* Stage 1 (2026-09-28): input and library labels at 13px with one style; the result screen is rebuilt in stage 4. */
+.launch-input .form-grid { grid-template-columns: minmax(0, 1fr); }
+.launch-input .form-grid label,
+#setManager .form-grid label { font-size: 13px; font-weight: 650; }
+.launch-input .form-grid select,
+#setManager .form-grid select,
+#setManager .form-grid input:not([type=checkbox]) { font-size: 15px; font-weight: 400; }
 
 .form-grid label,
 .readonly-field {
@@ -1396,19 +1412,19 @@ select { width: 100%; }
 .set-picker { display: grid; gap: 7px; border: 1px solid var(--line); border-radius: 8px; padding: 14px; background: var(--surface-quiet); }
 .set-picker small { color: var(--muted); }
 .settings-grid, .settings-panel, .strategy-label { margin-top: 16px; }
-.strategy-label { display: block; margin-bottom: 6px; font-weight: 700; }
+.strategy-label { display: block; margin-bottom: 5px; font-size: 13px; font-weight: 650; }
 .consent { display: flex; gap: 8px; align-items: center; margin-top: 14px; }
 input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--accent); }
 summary { cursor: pointer; padding: 10px 0; }
 pre { font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 360px; overflow-y: auto; color: var(--muted); }
-.history-card { margin: 14px 0; padding: 20px; }
+.history-card { margin: var(--gap-section) 0 0; padding: 20px; }
 .history-list { max-height: 360px; overflow-y: auto; }
 .history-row { display: flex; justify-content: space-between; gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--line); }
 .history-row > div { min-width: 0; overflow-wrap: anywhere; }
 .history-row p { margin: 4px 0; font-size: 12px; }
 .history-row small { color: var(--muted); font-size: 11px; }
-.history-row .action-row { flex: 0 0 170px; align-content: center; }
-#setManager { margin-top: 14px; }
+.history-row .action-row { flex: 0 0 auto; justify-content: flex-end; align-self: flex-start; margin-top: 0; }
+#setManager { margin-top: var(--gap-section); }
 .frame-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(140px,1fr)); gap: 10px; }
 .frame-grid figure { margin: 0; }
 .frame-grid img { width: 100%; border-radius: 5px; }
