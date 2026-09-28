@@ -1,13 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import {fixture,waitRun} from '../test-support/fixture.js';
 import {defaultSettings} from '../src/settings.js';
 import {id,sha256} from '../src/core.js';
 import {runAdditionalChecks} from '../tools/geap-probe/extra-checks.mjs';
 test('Checks 7–11 execute synthetic contracts end-to-end, persist full inputs, keep artifacts shared only within repetitions and rescore without API',async t=>{
-  const {service,config,demo}=await fixture(t),dir=path.resolve('.local-validation',`probe-fixture-${id()}`);await fs.mkdir(dir,{recursive:true});const actual=await service.getMedia(demo.actual_video_id),v=(await service.getSet(demo.standard_set_id)).vocabulary;
+  const {service,config,demo}=await fixture(t),dir=await fs.mkdtemp(path.join(os.tmpdir(),'tas-probe-'));t.after(()=>fs.rm(dir,{recursive:true,force:true,maxRetries:5}));const actual=await service.getMedia(demo.actual_video_id),v=(await service.getSet(demo.standard_set_id)).vocabulary;
   const gt={gt_version:'synthetic-evaluation.v1',video_id:actual.video_id,duration_s:30,segments:Array.from({length:5},(_,i)=>({gt_segment_id:`gt-${i}`,gt_process_id:`occurrence-${i}`,start_s:i*6,end_s:(i+1)*6,job_no:v.labels[i%4].job_no,job_title:v.labels[i%4].job_title}))};
   const files={'settings.json':defaultSettings(config),'policy.json':{version:'tas-eval-round18.v1',sample_hz:10,units:{rates:'ratio',edit:'0..100'}},'gt.json':gt,'groups.json':[{group_id:'synthetic-group',job_nos:['100','110'],selection_reason:'合成テスト用。実精度の評価ではない。',windows:[{video_id:actual.video_id,start_s:0,end_s:12}]}],'observability.json':gt.segments.map(s=>({gt_segment_id:s.gt_segment_id,status:'disputed',reason:'synthetic',reviewer:'test'}))};
   for(const [name,value]of Object.entries(files))await fs.writeFile(path.join(dir,name),JSON.stringify(value));const manifest={schema_version:'geap-eval-manifest.v1',dataset_id:'synthetic-selftest',split:'pilot',standard_set_id:demo.standard_set_id,settings_ref:'settings.json',scoring_policy_ref:'policy.json',acceptance_policy_ref:null,repetitions:3,analysis_strategies:['text_only','vocabulary_guided','visual_evidence'],analysis_modes:['zero_shot','few_shot'],cases:[{case_id:'synthetic-actual',inference:{video_id:actual.video_id,asset_ref:service.store.resolve(actual.asset_ref)},scoring_only:{gt_ref:'gt.json',scenario:'normal',similar_groups_ref:'groups.json',observability_ref:'observability.json'}}]};await fs.writeFile(path.join(dir,'manifest.json'),JSON.stringify(manifest));
