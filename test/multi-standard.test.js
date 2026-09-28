@@ -86,6 +86,7 @@ test('display aggregates occurrences and missing processes without averaging pro
 
 test('terminal job text and media recovery stay separate; readiness explains input/consent/profile blockers',()=>{
   for(const status of ['succeeded','failed','cancelled','interrupted','awaiting_approval']){const p=runPresentation({status,result_available:status==='succeeded',cleanup:{cleanup_status:'retry_wait'}});assert.equal(p.ended,true);assert.equal(p.observe_cleanup,true);assert.equal(p.message.includes('サーバーで処理しています'),false);}
+  assert.match(runPresentation({status:'cancelled',error:{message:'媒体の検証に失敗'},cleanup:{cleanup_status:'deleted'}}).message,/中止/);
   assert.equal(runPresentation({status:'stage2_running',cleanup:{cleanup_status:'deleted'}}).ended,false);
   const settings={audio_enabled:false,fps:1,processing_mode:'AGENTIC',model_revision_scope:'test'},set={status:'ready',name:'S',description_profiles:{unguided:{conditions:settings}},representative_images:[{}],sources:[{}]};
   const base={config:{ready:true},video:{display_name:'V',duration_s:30},set,mode:'few_shot',strategy:'text_only',settings,busy:false,consent:false};assert.equal(analysisReadiness(base).ready,false);assert.match(analysisReadiness(base).message,/同意/);assert.equal(analysisReadiness({...base,consent:true}).ready,true);assert.equal(analysisReadiness({...base,consent:true,settings:{...settings,audio_enabled:true}}).ready,false);assert.equal(analysisReadiness({...base,consent:true,strategy:'visual_evidence',set:{...set,media_state:{images_missing:1}}}).ready,false);

@@ -76,6 +76,8 @@ $env:GEAP_ENVIRONMENT_CONFIRMED = "true"
 node server.js
 ```
 
+Windowsでは同じ値を `real-connection.env.example` から作る `real-connection.env`（Git管理外）へ記入し、`start-app-real.bat` で起動できる。起動口は `MOCK_MODE=false` を強制し、`DATA_ROOT` の既定を `data-real` にし、`GEAP_ENVIRONMENT_CONFIRMED=true` とgcloudがなければ起動しない。`start-app.bat` は常にモックで起動する。モックのStage1は動画長を約6秒で均等分割し、Stage2は作業名一覧を順番に割り当てる固定パターン（5区間ごとに「その他」）であり、映像を解析しない。モック結果のラベル誤りをモデル・プロンプトの精度として扱わない（2026-09-24追記）。
+
 必要なら `GEAP_HOST` でHTTPSの接続先ホストを指定する。未指定時は `GEAP_LOCATION=global` なら `https://aiplatform.googleapis.com`、それ以外は `https://{location}-aiplatform.googleapis.com` を構成する。2026-09-12〜13にglobalホスト／v1beta1／gemini-3.6-flashの実呼び出しを確認済み。先行測定では同モデルのus-central1呼び出しは404であり、モデル一覧への掲載を地域エンドポイントでの実行可否と同一視しない。実行時の組合せは履歴に保存する。
 
 各API試行直前にgcloudからtokenを取得し、401は1回再取得、403は反復しない。429/5xxは5秒・20秒、Retry-Afterが長ければそれを優先し2回まで。1回60分・全体3時間は停止条件であり、期待性能ではない。送信後timeout/切断は結果不明として自動再送しない。実接続の失敗をモックへ切り替えない。WindowsではCloud SDKのbinがサーバープロセスのPATHに必要。インストール前から開いているシェルではPATHを反映してから起動する。

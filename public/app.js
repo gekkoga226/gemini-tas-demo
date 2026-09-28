@@ -228,13 +228,21 @@ function renderPlayback(followPlayhead = false) {
   document.querySelectorAll(".segment-block[data-segment-index]").forEach((block) => {
     block.classList.toggle("current", Number(block.dataset.segmentIndex) === index);
   });
+  let currentRow = null;
   document.querySelectorAll(".segment-row[data-segment-index]").forEach((row) => {
     const isCurrent = Number(row.dataset.segmentIndex) === index;
     row.classList.toggle("current", isCurrent);
-    const tag = row.querySelector(".current-tag");
-    if (tag) tag.hidden = !isCurrent;
+    if (isCurrent) { row.setAttribute("aria-current", "true"); currentRow = row; } else row.removeAttribute("aria-current");
   });
+  // 現在位置の区間が変わった時だけ一覧をスクロールし、利用者の手動スクロールと競合させない。
+  if (index !== state.followedRowIndex) { state.followedRowIndex = index; if (currentRow) keepRowVisible($("#segmentList"), currentRow); }
   if (followPlayhead) ensureTimelineTimeVisible(state.currentTime);
+}
+function keepRowVisible(list, row) {
+  if (!list) return;
+  const bounds = list.getBoundingClientRect(); const rect = row.getBoundingClientRect();
+  if (rect.top < bounds.top) list.scrollTop += rect.top - bounds.top;
+  else if (rect.bottom > bounds.bottom) list.scrollTop += rect.bottom - bounds.bottom;
 }
 function renderTimeline() {
   const segments = currentSegments(); const duration = axisEnd(); const container = $("#timelineSegments"); container.replaceChildren(); const trackWidth = sizeTimelineTrack();
@@ -303,14 +311,17 @@ function beginHandleDrag(event, index, side) {
 function escapeHtml(value) { return String(value).replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character]); }
 
 function renderList() {
-  const list = $("#segmentList"); const active = activeIndex(); list.replaceChildren();
+  const list = $("#segmentList"); const active = activeIndex();
+  const focusedIndex = list.contains(document.activeElement) ? document.activeElement.closest('.segment-row')?.dataset.segmentIndex : null;
+  list.replaceChildren();
   currentSegments().forEach((segment, index) => {
-    const row = document.createElement("button"); row.type = "button"; row.className = `segment-row${index === state.selected ? " selected" : ""}${state.warnings[index]?.length ? " warning" : ""}`;
+    const row = document.createElement("button"); row.type = "button"; row.className = `segment-row${index === state.selected ? " selected" : ""}${index === active ? " current" : ""}${state.warnings[index]?.length ? " warning" : ""}`;
     row.dataset.segmentIndex = index; row.setAttribute("aria-pressed", String(index === state.selected));
+    if (index === active) row.setAttribute("aria-current", "true");
     const duration = (timeToSeconds(segment.end_time) ?? 0) - (timeToSeconds(segment.start_time) ?? 0);
+    // 再生中の区間はバッジではなく行の薄い青の塗りで示す（renderPlaybackで追従）。
     const stateTags = [
       index === state.selected ? '<span class="selection-tag">選択中</span>' : "",
-      `<span class="current-tag"${index === active ? "" : " hidden"}>現在位置</span>`,
       state.warnings[index]?.length ? '<span class="warning-mark">要確認</span>' : "",
     ].join("");
     row.innerHTML = `<span class="segment-number">${String(index + 1).padStart(2, "0")}</span><span class="row-copy"><strong>${escapeHtml(segment.job_title)}</strong><small>${escapeHtml(segment.start_time)}–${escapeHtml(segment.end_time)} ・ ${duration}秒 ・ Job ${escapeHtml(segment.job_no)}</small></span><span class="row-state">${stateTags}</span>`;
@@ -318,6 +329,7 @@ function renderList() {
   });
   const selectedRow = list.querySelector(".segment-row.selected");
   if (selectedRow) selectedRow.scrollIntoView({ block: "nearest", inline: "nearest" });
+  if (focusedIndex != null) list.querySelector(`[data-segment-index="${focusedIndex}"]`)?.focus({preventScroll:true});
 }
 function renderDetail() {
   if (state.formDirty) return;
@@ -417,7 +429,7 @@ function bindDrop(zoneSelector, inputSelector, handler) {
   for (const eventName of ["dragleave", "drop"]) zone.addEventListener(eventName, (event) => { event.preventDefault(); zone.classList.remove("dragover"); });
   zone.addEventListener("drop", (event) => handler(event.dataTransfer.files[0]));
 }
-const workflow=createWorkflow({state,$,render,setStatus,toast,renderDirty,seek,applyPendingDetail});
+const workflow=createWorkflow({state,$,render,setStatus,toast,renderDirty,seek,selectSegment,applyPendingDetail});
 function initialize(){return workflow.initialize();}
 
 bindDrop("#videoDrop", "#videoInput", selectVideo);

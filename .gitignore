@@ -8,3 +8,9 @@ tools/geap-probe/runs/
 
 /data-real/
 /connectivity-inputs/
+
+# Local development work measurements
+.work-measure/
+
+# Real-connection launcher settings (values confirmed by the operator)
+/real-connection.env

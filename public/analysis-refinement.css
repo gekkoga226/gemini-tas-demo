@@ -17,3 +17,45 @@ html{scroll-padding-top:76px}main{max-width:1440px;padding:24px 28px 56px;margin
 .timeline-track{background:#f3f6fb}.timeline-ruler{background:#eaf0f8}.timeline::after{background:linear-gradient(90deg,transparent,#f3f6fb 34%);color:#53657c}.ruler-label{color:#41566f}.timeline-scroll{scrollbar-color:#8095b0 #eaf0f8}.timeline-scroll::-webkit-scrollbar-track{background:#eaf0f8}.segment-bar{border-right-color:#f3f6fb}.selection-tag{color:#fff}.current-tag{color:#9d3544;border-color:#dca6af;background:#fcecf0}.warning-mark{color:#845015;border-color:#d5b87f;background:#fff3d8}.segment-number{background:#e1ebf6;color:#355b82;border-color:#acbfd7}.readonly-field,.detail-heading small{color:#51657e}.readonly-field span{color:#334860;border-color:#ccd7e5}.dirty-badge.dirty{color:#83521a;background:#fff1d2;border-color:#d5b778}.form-grid input:disabled{background:#edf1f6;color:#637289;border-color:#c6d1df}kbd{color:#425875;background:#eef2f7;border-color:#bac7d8}
 
 .mobile-start-link{display:none}@media(max-width:720px){.mobile-start-link{display:block;margin:14px 18px 0;padding:12px 16px;border:1px solid #aebfde;border-radius:6px;background:#edf3ff;color:#2d50ac;text-align:center;text-decoration:none;font-size:14px;font-weight:650}}
+
+/* Keep the review task beside the film while preserving the vertical players in §7.2. */
+.workspace{grid-template-columns:minmax(0,1.32fr) minmax(340px,.9fr);grid-template-areas:"start start" "media editor" "timeline editor" "output editor" "stats stats";gap:16px;align-items:start}
+.result-start{grid-area:start;display:flex;align-items:center;justify-content:space-between;gap:20px;padding:18px 22px;border-left:4px solid var(--accent)}
+.result-start strong{display:block;font-size:19px;color:var(--ink)}
+.result-start p{margin:5px 0 0;color:var(--muted);font-size:13px;line-height:1.6}
+.result-start .button{white-space:nowrap}
+.result-analytics{grid-area:stats;padding:18px 22px}
+.result-analytics>summary{cursor:pointer;font-weight:700;color:var(--accent-strong);padding:2px 0}
+.result-analytics>section{padding-top:16px}
+.media-card{grid-area:media}.timeline-card{grid-area:timeline}.editor-card{grid-area:editor}.output-card{grid-area:output}
+.media-card .video-shell{margin-bottom:12px}.media-card video{max-height:290px}
+#standardMediaSection{padding-bottom:10px;margin-bottom:14px;border-bottom:1px solid var(--line)}
+.workspace.is-zero #standardMediaSection,.workspace.is-zero #standardTimelineSegments{display:none}
+.workspace.is-zero #standardInferenceNotice{display:none}
+.selected-comparison{margin:12px 0;padding:10px 12px;background:var(--accent-soft);border-left:3px solid var(--accent-strong);color:#28466e;font-size:13px;line-height:1.6}
+.editor-card .evidence-panel{margin:14px 0;padding:14px;background:#f7f9fc;border:1px solid var(--line);border-radius:6px;max-height:360px;overflow:auto}
+.editor-card .segment-list{max-height:330px;margin-bottom:16px}
+.editor-card .segment-row{min-height:54px}
+.status-card #retryRun{grid-column:1/-1;justify-self:start}
+#firstPending:focus-visible,#retryRun:focus-visible,.segment-row:focus-visible,.timeline button:focus-visible,input:focus-visible{outline:3px solid var(--accent-strong);outline-offset:2px}
+@media(max-width:1000px){.workspace{grid-template-columns:minmax(0,1fr);grid-template-areas:"start" "media" "timeline" "editor" "output" "stats"}.media-card video{max-height:260px}.editor-card .evidence-panel{max-height:none}}
+@media(max-width:720px){.result-start{align-items:stretch;flex-direction:column;padding:16px}.result-start .button{white-space:normal}.workspace{gap:12px}.media-card video{max-height:230px}.editor-card .segment-list{max-height:280px}.selected-comparison{overflow-wrap:anywhere}}
+/* 2026-09-24: 再生中の区間は一覧の行を薄い青で塗って追従する。選択中は左の青線と「選択中」タグで区別する。 */
+.segment-row.selected{background:transparent}.segment-row.current{background:#dcebfc}.segment-row.current.selected{background:#d3e4fa}
+@media(hover:hover) and (pointer:fine){.segment-row.selected:hover{background:var(--surface-hover)}.segment-row.current:hover{background:#cfe1f8}}
+@media(prefers-reduced-motion:no-preference){.segment-row{transition:background-color .18s ease}}
+.mock-result-warning strong{display:block;margin-bottom:4px}.mock-result-warning code{font-size:12px}
+/* 2026-09-24: 動画の真下に時間チャート、動画の右横に作業ラベル一覧を置く。
+   動画枠は黒帯を出さずに映像の高さに合わせ、チャートを見出し直後へ、補足の通知はチャートの下へ移す。
+   右列は区間一覧→選択区間の編集→候補・根拠の順にする。 */
+.media-card .video-shell{margin-bottom:0;max-height:min(52vh,480px);aspect-ratio:16/9;margin-inline:auto}.media-card video{max-height:none;height:100%}
+.media-card>.section-heading .section-caption{display:none}
+.timeline-card{display:flex;flex-direction:column}
+.timeline-card>.timeline-heading{order:0}.timeline-card>.playback-meta{order:1;margin-top:0}.timeline-card>.timeline{order:2}.timeline-card>.timeline-footer{order:3}
+.timeline-card>#resultIdentity,.timeline-card>#mockResultWarning,.timeline-card>#globalWarnings,.timeline-card>#selectedComparison{order:4}
+.timeline-card>.timeline-heading .section-caption{display:none}
+.editor-card{display:flex;flex-direction:column}
+.editor-card>.section-heading{order:0}.editor-card>.view-tabs{order:1}.editor-card>.editor-tools{order:2}.editor-card>.segment-list{order:3;margin-top:12px}.editor-card>.detail-panel{order:4}.editor-card>.evidence-panel{order:5}
+.editor-card .segment-list{max-height:min(52vh,480px)}
+.workspace{grid-template-rows:auto auto auto 1fr auto}.workspace>.timeline-card{margin-top:-4px}
+@media(max-width:1000px){.media-card .video-shell{max-height:none}.workspace{grid-template-rows:none}}
