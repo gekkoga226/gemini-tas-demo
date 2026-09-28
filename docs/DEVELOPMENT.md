@@ -19,3 +19,21 @@ npm.cmd run probe:self-test
 全テストは外部API不要です。実API用アダプターのテストも通信を置き換えています。プローブ自己検査は合成データのCheck 7〜11、ジョブ故障経路、採点の手計算例を実行し、実測Checkの状態を変更しません。
 
 実測の入力・実行方法・未確認事項は [GEAPプローブ](../tools/geap-probe/README.md)。旧MVP資料・旧Flashテキスト疎通テストは歴史的互換検証として残しています。画面は新しい永続ジョブAPIだけを使い、旧 `/api/analyze` の実接続は通常起動では廃止しています。
+
+## 画面の撮影と自動チェック
+
+`tools/ui-shots/` は Chrome を自動操作して画面を撮影し、画面・幅ごとに「ページの横スクロール」「ボタン・タブ・ラベル等からのはみ出し」「12px未満の文字」「コントラスト4.5:1未満」を数える。Node.js 22以上が必要（組み込みの WebSocket を使う）。外部パッケージは使わない。撮影は別ポートのモックで行い、4173番と `data-real/` は使わない。
+
+```powershell
+# 別のウィンドウで、別ポートのモックを起動する（画面は閲覧だけ）
+$env:MOCK_MODE = "true"; $env:PORT = "4180"; $env:DATA_ROOT = "data"; npm.cmd start
+node tools/ui-shots/shoot.mjs --label 2026-09-28_before
+node tools/ui-shots/shoot.mjs --base http://127.0.0.1:4186 --scenarios page --paths /index.html --viewports 1920x950,400 --strict
+```
+
+- 既定：接続先 `http://127.0.0.1:4180`、出力先 `.local/ui-shots/<ラベル>/`（PNG・`report.json`・`summary.txt`）、画面幅 1920×950・1600・1280・1000・720・400（高さ1000）、シナリオ `app`（B の新しい分析・実行履歴・お手本ライブラリ・結果（お手本なし／あり／最初の要確認）と、A の動画と作業区間）。一覧は `--help`。
+- Chrome の場所は `--chrome` か環境変数 `UI_SHOTS_CHROME`（既定 `C:/Program Files/Google/Chrome/Application/chrome.exe`）。ブラウザの作業用フォルダは OS の一時フォルダに作り、終了時に消す。
+- 安全策：4173番・ローカル以外・`/api/health` が mock でない接続先は拒否する。シナリオは画面を開いてスクロールするだけで、接続先以外への通信と GET 以外の通信は遮断して記録する。出力先にファイルがあれば中止する（`--overwrite` で上書き）。
+- 結果画面は、実行履歴で最新の完了分を使う（`--few-run`・`--zero-run` で指定）。該当がなければ省略する。
+- 終了コード：0 正常、1 違反あり（`--strict` のとき）、2 指定・環境の誤り、3 撮影できない画面あり。Git Bash では `/` で始まる引数が書き換えられるため、`MSYS_NO_PATHCONV=1` を付ける。
+- 自動チェックは目安で、目視の確認を置き換えない。コントラストは文字の大きさによらず4.5:1で判定し、画像・グラデーション・動画の上の文字と無効化された操作は「対象外」として別に数える。
