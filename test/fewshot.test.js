@@ -11,7 +11,7 @@ import {STAGE2_SCHEMA,STAGE2_SCHEMA_VERSION} from '../src/response-schemas.js';
 
 async function waitRun(service,runId) {for(let n=0;n<1000;n++){const r=await service.status(runId);if(['succeeded','failed','cancelled','interrupted','awaiting_approval'].includes(r.status))return r;await delay(20);}throw new Error('local job timeout');}
 export async function fixture(t) {
-  const root=await fs.mkdtemp(path.join(os.tmpdir(),'tas-round18-'));const config={...tasConfig({MOCK_MODE:'true'}),dataRoot:root,mockDelayMs:10,allowFaults:true};const service=new TasService(config);await service.ready;t.after(()=>service.close());const demo=await service.demo();const built=await waitRun(service,demo.run_id);assert.equal(built.status,'awaiting_approval',JSON.stringify(built.error));await service.approve(demo.standard_set_id,'local-test');return {service,config,demo};
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'tas-round18-'));const config={...tasConfig({MOCK_MODE:'true'}),dataRoot:root,mockDelayMs:10,allowFaults:true};const service=new TasService(config);await service.ready;t.after(async()=>{await service.close();await fs.rm(root,{recursive:true,force:true,maxRetries:5});});const demo=await service.demo();const built=await waitRun(service,demo.run_id);assert.equal(built.status,'awaiting_approval',JSON.stringify(built.error));await service.approve(demo.standard_set_id,'local-test');return {service,config,demo};
 }
 test('Round 18: published assets, six conditions, immutable times, evidence, shared artifacts and reviews',async t=>{
   const {service,config,demo}=await fixture(t);const settings=defaultSettings(config);const results=[];

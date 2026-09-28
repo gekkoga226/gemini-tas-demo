@@ -14,7 +14,7 @@ import {id} from '../src/core.js';
 test('connectivity inputs register into an empty store with valid matching GT and no model results',async t=>{
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'tas-connectivity-'));
   const config={...tasConfig({MOCK_MODE:'true'}),dataRoot:path.join(root,'data'),mockDelayMs:1};
-  const service=new TasService(config);await service.ready;t.after(()=>service.close());
+  const service=new TasService(config);await service.ready;t.after(async()=>{await service.close();await fs.rm(root,{recursive:true,force:true,maxRetries:5});});
   const app=createAppServer({...loadConfig({}),...config,port:0},{tasService:service});app.listen(0,'127.0.0.1');await once(app,'listening');t.after(()=>app.close());
   const inputs=path.join(root,'inputs');
   const prepared=await prepareConnectivityInputs(`http://127.0.0.1:${app.address().port}`,inputs);
