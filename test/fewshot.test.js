@@ -31,3 +31,10 @@ test('Round 18: published assets, six conditions, immutable times, evidence, sha
   const set=await service.getSet(demo.standard_set_id);assert.equal(set.representative_images.length,12);assert.ok(set.representative_images.every(i=>i.extracted_time_s>=0&&i.width<=768&&i.height<=768&&i.gt_process_id));
   for(const k of await service.store.list('runs')){const run=await service.store.read(`runs/${k}/run.json`);if(run.job_kind!=='analysis')continue;for(const attempt of run.attempts){const body=await service.store.read(attempt.request_ref);const text=JSON.stringify(body.contents);assert.equal(text.includes('build_only_gt'),false);assert.equal(text.includes('gt_process_id'),false);assert.equal(text.includes('display_segments'),false);if(attempt.stage==='stage1'&&run.snapshot.analysis_strategy!=='vocabulary_guided')assert.equal(text.includes('job_no'),false);if(attempt.stage==='stage2'&&run.snapshot.analysis_mode==='zero_shot')assert.equal(text.includes('example_id'),false);}}
 });
+test('run status and history return the vocabulary reference used by the run, for restoring the input form',async t=>{
+  const {service,config,demo}=await fixture(t),base={input_video_id:demo.actual_video_id,analysis_strategy:'text_only',settings:defaultSettings(config),consent_confirmed:true};
+  const zero=await service.createAnalysis({...base,client_request_id:id(),analysis_mode:'zero_shot',vocabulary_ref:demo.vocabulary_ref}),few=await service.createAnalysis({...base,client_request_id:id(),analysis_mode:'few_shot',standard_set_id:demo.standard_set_id});
+  for(const run of [zero,few])assert.equal((await waitRun(service,run.run_id)).status,'succeeded');
+  assert.equal((await service.status(zero.run_id)).vocabulary_ref,demo.vocabulary_ref);assert.equal((await service.status(few.run_id)).vocabulary_ref,null);
+  assert.equal((await service.history()).find(r=>r.run_id===zero.run_id).vocabulary_ref,demo.vocabulary_ref);
+});
