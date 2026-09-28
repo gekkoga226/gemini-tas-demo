@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gemini動画TAS 処理フロー解説（非エンジニア向け）</title>
+<style>
+  :root { color-scheme: light; }
+  .viz-root {
+    color-scheme: light;
+    --surface-1:      #fcfcfb;
+    --page-plane:     #f9f9f7;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --grid:           #e1e0d9;
+    --baseline:       #c3c2b7;
+    --border:         rgba(11,11,11,0.10);
+    --series-1: #2a78d6; /* 案1 blue */
+    --series-2: #eb6834; /* 案2 orange */
+    --series-3: #1baf7a; /* 案3 aqua */
+    --series-1-bg: #eaf2fc;
+    --series-2-bg: #fdece3;
+    --series-3-bg: #e5f7f0;
+    --status-good: #0ca30c;
+    --status-warning: #fab219;
+    --status-serious: #ec835a;
+    --status-critical: #d03b3b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) .viz-root {
+      color-scheme: dark;
+      --surface-1:      #1a1a19;
+      --page-plane:     #0d0d0d;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #898781;
+      --grid:           #2c2c2a;
+      --baseline:       #383835;
+      --border:         rgba(255,255,255,0.10);
+      --series-1: #3987e5;
+      --series-2: #d95926;
+      --series-3: #199e70;
+      --series-1-bg: #17263a;
+      --series-2-bg: #33200f;
+      --series-3-bg: #0f2b21;
+      --status-good: #0ca30c;
+      --status-warning: #fab219;
+      --status-serious: #ec835a;
+      --status-critical: #e66767;
+    }
+  }
+  :root[data-theme="dark"] .viz-root {
+    color-scheme: dark;
+    --surface-1:      #1a1a19;
+    --page-plane:     #0d0d0d;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --grid:           #2c2c2a;
+    --baseline:       #383835;
+    --border:         rgba(255,255,255,0.10);
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-1-bg: #17263a;
+    --series-2-bg: #33200f;
+    --series-3-bg: #0f2b21;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+    background: var(--page-plane);
+    color: var(--text-primary);
+  }
+  .viz-root { display: block; padding: 32px 20px 80px; }
+  .wrap { max-width: 1000px; margin: 0 auto; }
+
+  header.page-head { margin-bottom: 28px; }
+  header.page-head h1 { font-size: 24px; margin: 0 0 8px; }
+  header.page-head p { color: var(--text-secondary); font-size: 14px; line-height: 1.7; margin: 4px 0; }
+  .theme-toggle {
+    position: fixed; top: 16px; right: 16px; z-index: 10;
+    font-size: 12px; padding: 6px 10px; border-radius: 6px;
+    border: 1px solid var(--border); background: var(--surface-1); color: var(--text-secondary);
+    cursor: pointer;
+  }
+
+  section { margin-bottom: 40px; }
+  section h2 {
+    font-size: 17px; margin: 0 0 4px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  section h2 .num {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 24px; height: 24px; border-radius: 50%;
+    background: var(--text-primary); color: var(--surface-1);
+    font-size: 12px; font-weight: 700; flex: none;
+  }
+  section .lede { color: var(--text-secondary); font-size: 13px; line-height: 1.8; margin: 0 0 16px 32px; }
+
+  .card {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 20px;
+  }
+
+  /* ---- vertical flow ---- */
+  .flow-v { display: flex; flex-direction: column; align-items: stretch; gap: 0; }
+  .step {
+    position: relative;
+    border: 1px solid var(--border);
+    background: var(--surface-1);
+    border-radius: 8px;
+    padding: 12px 16px;
+    display: flex; gap: 12px; align-items: flex-start;
+  }
+  .step + .step { margin-top: 22px; }
+  .step::before {
+    content: "↓";
+    position: absolute;
+    top: -22px; left: 20px;
+    color: var(--text-muted);
+    font-size: 15px;
+  }
+  .step:first-child::before { content: none; }
+  .step .badge {
+    flex: none; width: 26px; height: 26px; border-radius: 50%;
+    background: var(--baseline); color: var(--surface-1);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700;
+  }
+  .step .body h3 { margin: 0 0 4px; font-size: 14px; }
+  .step .body p { margin: 0; font-size: 12.5px; color: var(--text-secondary); line-height: 1.7; }
+  .step.accent-1 .badge { background: var(--series-1); }
+  .step.accent-2 .badge { background: var(--series-2); }
+  .step.accent-3 .badge { background: var(--series-3); }
+  .step.warn { border-color: var(--status-warning); background: color-mix(in srgb, var(--status-warning) 8%, var(--surface-1)); }
+  .step.warn .badge { background: var(--status-warning); color: #3a2c00; }
+  .tag {
+    display: inline-block; font-size: 10.5px; padding: 2px 7px; border-radius: 999px;
+    background: var(--grid); color: var(--text-secondary); margin-left: 6px; white-space: nowrap;
+  }
+
+  /* ---- overview matrix ---- */
+  .matrix { display: grid; grid-template-columns: 150px repeat(2, 1fr); gap: 8px; }
+  .matrix .cell {
+    border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px;
+    font-size: 12.5px; line-height: 1.6;
+  }
+  .matrix .head { background: transparent; border: none; font-weight: 700; font-size: 12.5px; color: var(--text-secondary); display:flex; align-items:center; }
+  .matrix .strat { font-weight: 700; display: flex; align-items: center; gap: 6px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+  .dot.s1 { background: var(--series-1); }
+  .dot.s2 { background: var(--series-2); }
+  .dot.s3 { background: var(--series-3); }
+  .matrix .combo { color: var(--text-secondary); }
+  .center-note {
+    grid-column: 1 / -1; text-align: center; font-size: 12px; color: var(--text-muted);
+    padding: 8px 0 2px;
+  }
+
+  /* ---- 3-column strategy compare ---- */
+  .cols3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  @media (max-width: 820px) { .cols3 { grid-template-columns: 1fr; } }
+  .strategy-col { border-radius: 10px; overflow: hidden; border: 1px solid var(--border); }
+  .strategy-col .head {
+    padding: 12px 14px; font-weight: 700; font-size: 13.5px; color: #fff;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .strategy-col.s1 .head { background: var(--series-1); }
+  .strategy-col.s2 .head { background: var(--series-2); }
+  .strategy-col.s3 .head { background: var(--series-3); }
+  .strategy-col .body { padding: 14px; background: var(--surface-1); }
+  .strategy-col .mini-step {
+    border: 1px solid var(--border); border-radius: 7px; padding: 9px 11px; font-size: 12px;
+    line-height: 1.6; color: var(--text-secondary); background: var(--page-plane);
+  }
+  .strategy-col .mini-step + .mini-step { margin-top: 8px; position: relative; }
+  .strategy-col .mini-step + .mini-step::before {
+    content: "↓"; position: absolute; top: -14px; left: 10px; color: var(--text-muted); font-size: 12px;
+  }
+  .strategy-col .mini-step b { color: var(--text-primary); }
+  .strategy-col.s1 .body { background: var(--series-1-bg); }
+  .strategy-col.s2 .body { background: var(--series-2-bg); }
+  .strategy-col.s3 .body { background: var(--series-3-bg); }
+  .strategy-col.s1 .mini-step, .strategy-col.s2 .mini-step, .strategy-col.s3 .mini-step { background: var(--surface-1); }
+
+  /* ---- side by side (zero vs few) ---- */
+  .cols2 { display: grid; grid-template-columns: 1fr auto 1fr; gap: 14px; align-items: stretch; }
+  @media (max-width: 720px) { .cols2 { grid-template-columns: 1fr; } .cols2 .vs { display:none; } }
+  .cols2 .pane { border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; background: var(--surface-1); }
+  .cols2 .pane h3 { margin: 0 0 8px; font-size: 13.5px; }
+  .cols2 .pane ul { margin: 0; padding-left: 18px; font-size: 12.5px; color: var(--text-secondary); line-height: 1.8; }
+  .cols2 .vs { align-self: center; font-size: 12px; color: var(--text-muted); font-weight: 700; }
+
+  /* ---- small utility cards ---- */
+  .cardsgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  @media (max-width: 820px) { .cardsgrid { grid-template-columns: 1fr; } }
+  .util-card { border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; background: var(--surface-1); }
+  .util-card h3 { margin: 0 0 6px; font-size: 13px; }
+  .util-card p { margin: 0; font-size: 12px; color: var(--text-secondary); line-height: 1.7; }
+
+  /* ---- proposal (not implemented) ---- */
+  .proposal-box {
+    border: 1.5px dashed var(--text-muted); border-radius: 10px; padding: 16px 18px;
+    background: var(--page-plane); color: var(--text-secondary); font-size: 12.5px; line-height: 1.8;
+  }
+  .proposal-box .badge-nyi {
+    display: inline-block; font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 999px;
+    background: var(--status-warning); color: #3a2c00; margin-bottom: 8px;
+  }
+
+  /* ---- glossary ---- */
+  table.glossary { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  table.glossary th, table.glossary td {
+    text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--grid); vertical-align: top;
+  }
+  table.glossary th { color: var(--text-muted); font-weight: 600; font-size: 11.5px; }
+  table.glossary td.jp { font-weight: 600; }
+
+  .foot-note { font-size: 11.5px; color: var(--text-muted); margin-top: 40px; line-height: 1.8; }
+</style>
+</head>
+<body>
+<button class="theme-toggle" id="themeToggle" type="button">ライト/ダーク切替</button>
+<div class="viz-root">
+<div class="wrap">
+
+  <header class="page-head">
+    <h1>Gemini動画TAS（時間的アクションセグメンテーション）処理フロー解説</h1>
+    <p>作業動画をAI（Gemini）に見せて、「いつ・どこで区切りがあり・それぞれ何の作業か」を自動判定する仕組みの全体像です。エンジニアでなくても読めるように、実際の処理ステップをそのまま図解しています。</p>
+  </header>
+
+  <!-- 1. 全体像 -->
+  <section>
+    <h2><span class="num">1</span>全体像：2つの軸の組み合わせ</h2>
+    <p class="lede">「やり方」は独立した2つの選択肢（軸）の組み合わせで決まります。どの組み合わせも、内部では<b>同じ2段階のAI処理</b>（区切りを見つける→ラベルを付ける）が動きます。</p>
+    <div class="card">
+      <div class="matrix">
+        <div class="cell head">分析方式 ＼ モード</div>
+        <div class="cell head">お手本なしで分析</div>
+        <div class="cell head">お手本と照合</div>
+
+        <div class="cell strat"><span class="dot s1"></span>案1：項目化した文章照合</div>
+        <div class="cell combo">文章だけで判定</div>
+        <div class="cell combo">文章＋お手本の文章例で判定</div>
+
+        <div class="cell strat"><span class="dot s2"></span>案2：語彙補助の文章照合</div>
+        <div class="cell combo">区切り発見時から用語集を参照</div>
+        <div class="cell combo">用語集参照＋お手本の文章例</div>
+
+        <div class="cell strat"><span class="dot s3"></span>案3：映像根拠併用</div>
+        <div class="cell combo">文章＋実際の映像を見て判定</div>
+        <div class="cell combo">文章＋映像＋お手本の代表写真</div>
+
+        <div class="center-note">合計6通りの組み合わせを画面上で自由に選択可能（自動で他方式に切り替わることはない）</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2. 共通フロー -->
+  <section>
+    <h2><span class="num">2</span>すべての方式に共通する処理の流れ</h2>
+    <p class="lede">動画は分割（チャンク化）されません。1本の動画をまるごと、AIに<b>2回だけ</b>（区切り発見1回＋ラベル付け1回）見せる設計です。</p>
+    <div class="card">
+      <div class="flow-v">
+        <div class="step">
+          <div class="badge">1</div>
+          <div class="body"><h3>動画のアップロードと前処理</h3>
+            <p>動画を安全に保存し、内容が変わっていないか指紋（ハッシュ）で確認。既定では音声を切り離し（映像はそのまま）、長さや構成が変わっていないかも再確認します。</p></div>
+        </div>
+        <div class="step">
+          <div class="badge">2</div>
+          <div class="body"><h3>すでに同じ計算をしていないか確認（キャッシュ）</h3>
+            <p>同じ動画・同じ条件で過去に一度AIに分析させていれば、結果を使い回して再計算しません。ただし<b>案2</b>は用語集を最初から見せるため、案1・案3とは別に専用の結果を作ります。</p></div>
+        </div>
+        <div class="step accent-1">
+          <div class="badge">3</div>
+          <div class="body"><h3>ステージ1：区切り（区間）を見つける<span class="tag">AI呼び出し 1回目</span></h3>
+            <p>AIが動画全体を見て、「ここからここまでが1つのまとまり」という区切り（開始・終了の時刻と、その根拠）を出します。この時点では<b>「何の作業か」というラベルは付けません</b>。区切りは隙間なく・重ならず、動画の最初から最後までを漏れなくカバーする必要があり、機械的にチェックされます。</p></div>
+        </div>
+        <div class="step accent-2">
+          <div class="badge">4</div>
+          <div class="body"><h3>ステージ2：区間ごとに作業名を決める<span class="tag">AI呼び出し 2回目</span></h3>
+            <p>ステージ1で見つかった区切り（時刻は変更不可）それぞれについて、候補となる作業名を最大3つ、確信度つきで挙げ、最も可能性が高いものを最終ラベルとして選びます。方式によって、ここでAIに何を追加で見せるか（用語集・映像・お手本）が変わります（詳しくは次章）。</p></div>
+        </div>
+        <div class="step warn">
+          <div class="badge">5</div>
+          <div class="body"><h3>安全装置：あやしい判定を自動で見つける</h3>
+            <p>1位と2位の候補の差が僅差（5%以内）なら「同着」とみなし、表示上の確信度を49%以下に強制的に下げます。確信度が70%未満・区切り自体が根拠不足・該当なし（その他）になった場合なども「要確認」として自動で目立たせます。<b>AIが自分で判定を訂正することはなく、必ず人が確認する対象として残ります。</b></p></div>
+        </div>
+        <div class="step warn">
+          <div class="badge">6</div>
+          <div class="body"><h3>品質チェック：あり得ないパターンを検出</h3>
+            <p>用語集にない作業名・時間が前後矛盾・想定の半分未満や2倍超の長さ・標準の順番と逆・本来あるはずの工程が丸ごと抜けている、などを機械的に検出して警告します。<b>警告が出ても自動修正はされず</b>、すべて人の目でのチェック対象になります。</p></div>
+        </div>
+        <div class="step">
+          <div class="badge">7</div>
+          <div class="body"><h3>結果の保存と人による確認・修正</h3>
+            <p>AIの元の出力はそのまま保存され、上書きされません。人が画面上で内容を確認し、必要な修正は「レビュー」という別レイヤーとして重ねて保存されます（AIの判定履歴は常に残る）。</p></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3. 3方式の違い -->
+  <section>
+    <h2><span class="num">3</span>「分析方式」による違い：案1・案2・案3</h2>
+    <p class="lede">3つの方式は、ステージ2（ラベル付け）でAIに<b>何を追加で見せるか</b>が異なります。差はここだけで、区切りの見つけ方の基本ロジック自体は共通です。</p>
+    <div class="cols3">
+      <div class="strategy-col s1">
+        <div class="head"><span class="dot" style="background:#fff"></span>案1：項目化した文章照合</div>
+        <div class="body">
+          <div class="mini-step"><b>ステージ1</b>：用語集は見せず、映像だけから区切りと状況説明（文章）を作る</div>
+          <div class="mini-step"><b>ステージ2</b>：状況説明の文章＋用語集＋（お手本ありの場合）お手本の文章例、<b>だけ</b>を見て作業名を判定。映像そのものは見せない</div>
+        </div>
+      </div>
+      <div class="strategy-col s2">
+        <div class="head"><span class="dot" style="background:#fff"></span>案2：語彙補助の文章照合</div>
+        <div class="body">
+          <div class="mini-step"><b>ステージ1</b>：最初から用語集・区別ポイントを見せながら区切りと状況説明を作る（専用の結果として保存）</div>
+          <div class="mini-step"><b>ステージ2</b>：案1と同じく文章情報だけで判定（映像は見せない）</div>
+        </div>
+      </div>
+      <div class="strategy-col s3">
+        <div class="head"><span class="dot" style="background:#fff"></span>案3：映像根拠併用</div>
+        <div class="body">
+          <div class="mini-step"><b>ステージ1</b>：案1と全く同じ結果を再利用（作り直さない）</div>
+          <div class="mini-step"><b>ステージ2</b>：文章情報に加え、<b>動画本編そのもの</b>を再度AIに見せて確認。お手本ありの場合はさらに、お手本動画から切り出した代表写真（1区間につき3枚：開始・中間・終了付近）も一緒に見せる</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4. zero-shot vs few-shot -->
+  <section>
+    <h2><span class="num">4</span>「モード」による違い：お手本なし／お手本あり</h2>
+    <p class="lede">アルゴリズム自体は同じです。違いは<b>ステージ2でお手本（過去に人が確認・承認した正解データ）を見せるかどうか、それだけ</b>です。</p>
+    <div class="cols2">
+      <div class="pane">
+        <h3>お手本なしで分析（zero-shot）</h3>
+        <ul>
+          <li>ステージ2に参考例は一切渡されない</li>
+          <li>AIの一般的な知識と、用語集・映像だけで判定</li>
+          <li>新しい種類の作業や、お手本がまだ無い現場向け</li>
+        </ul>
+      </div>
+      <div class="vs">→ 同じ2段階処理 ←</div>
+      <div class="pane">
+        <h3>お手本と照合（few-shot・既定）</h3>
+        <ul>
+          <li>事前に人が承認済みの「標準作業セット」から、参考となる文章例（案3ではさらに代表写真）を追加で提示</li>
+          <li>過去の正解パターンに寄せて判定するため、精度が安定しやすい</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5. 標準作業セット作成 -->
+  <section>
+    <h2><span class="num">5</span>前提となる準備：「標準作業セット（お手本）」の作り方</h2>
+    <p class="lede">「お手本と照合」モードを使うには、事前にこのお手本を人の手で作っておく必要があります。</p>
+    <div class="card">
+      <div class="flow-v">
+        <div class="step">
+          <div class="badge">1</div>
+          <div class="body"><h3>正解データ（GT）の用意</h3>
+            <p>お手本にする動画（複数可）ごとに、人が「どこからどこまでが何の作業か」という正解の区切りとラベルを用意します。</p></div>
+        </div>
+        <div class="step accent-1">
+          <div class="badge">2</div>
+          <div class="body"><h3>ステージ1（区切り固定モード）</h3>
+            <p>通常と違い、区切りの発見はせず、人が決めた正解の区切りをAIに教えたうえで、その区間ごとの状況説明だけを作らせます。用語集なし版／あり版の両方で1回ずつ実施し、案1・3用と案2用、両方の参考データを揃えます。</p></div>
+        </div>
+        <div class="step accent-3">
+          <div class="badge">3</div>
+          <div class="body"><h3>代表写真の切り出し（任意）</h3>
+            <p>各区間の20%・50%・80%地点の3コマを自動で切り出し、案3のお手本画像として保存します（お手本動画そのものは使いません）。</p></div>
+        </div>
+        <div class="step">
+          <div class="badge">4</div>
+          <div class="body"><h3>人による承認</h3>
+            <p>内容がすべて正しいか人が確認・承認して初めて「使用可能」になります。承認前のデータが分析に使われることはありません。</p></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 6. 付随機能 -->
+  <section>
+    <h2><span class="num">6</span>そのほかの補助的な仕組み</h2>
+    <div class="cardsgrid">
+      <div class="util-card">
+        <h3>用語集の自動抽出</h3>
+        <p>作業手順書（PDF）をAIに読ませ、作業名・区別ポイントの候補リストを作成。必ず人が内容を確認・承認してから、分析で使う用語集として使われます。</p>
+      </div>
+      <div class="util-card">
+        <h3>安全装置の再計算</h3>
+        <p>基準（しきい値）を見直したいとき、AIに動画を見せ直さずに、過去の判定結果だけを使って「要確認」フラグや品質警告を再計算します。追加のAI利用料はかかりません。</p>
+      </div>
+      <div class="util-card">
+        <h3>「作業みえる」画面</h3>
+        <p>すでに出来上がった分析結果を、見やすく並べ替えて表示するだけの画面です。ここでは<b>新しいAI判定は一切行われません</b>。お手本なし／ありの結果比較、工程ごとの時間集計、手順書ふうの一覧表示などができます。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 7. 検討中の提案 -->
+  <section>
+    <h2><span class="num">7</span>検討中の提案（現時点では未実装）</h2>
+    <div class="proposal-box">
+      <span class="badge-nyi">未実装・未実測</span>
+      <p style="margin:0;">ステージ1のあとに、外部の分類サービス（Jev）を挟み、候補ラベルを別の角度から採点したり、根拠が薄い区間を「映像を見直すべき」「人が再確認すべき」として警告に使う、という設計提案があります。ただし<b>最終判断は常にこのシステム側の決まったルールで行い、Jevの自由記述だけで自動判定を変えることはない</b>という前提つきの案で、現在の案1・2・3の仕組みには一切影響していません。</p>
+    </div>
+  </section>
+
+  <!-- 用語集 -->
+  <section>
+    <h2><span class="num">8</span>用語ミニ辞典</h2>
+    <div class="card">
+      <table class="glossary">
+        <thead><tr><th>用語</th><th>意味</th></tr></thead>
+        <tbody>
+          <tr><td class="jp">分析方式（案1／案2／案3）</td><td>ステージ2でAIに何の情報を追加で見せるかの選択肢</td></tr>
+          <tr><td class="jp">モード（お手本なし／あり）</td><td>過去の承認済み正解データを参考として見せるかどうかの選択肢</td></tr>
+          <tr><td class="jp">ステージ1</td><td>動画から作業の「区切り」を見つける工程（ラベルは付けない）</td></tr>
+          <tr><td class="jp">ステージ2</td><td>見つかった区切りごとに「何の作業か」のラベルを決める工程</td></tr>
+          <tr><td class="jp">標準作業セット（お手本）</td><td>人が正解を用意し、承認済みの参照データ一式</td></tr>
+          <tr><td class="jp">確信度 / 要確認</td><td>AI判定の自信の度合いと、それが低い・矛盾がある場合の自動フラグ</td></tr>
+          <tr><td class="jp">品質警告</td><td>用語外・時間の異常・順序逆転・工程抜けなど、機械的に検出される異常サイン（自動修正はしない）</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <p class="foot-note">
+    作成日：2026-09-23／対象：本リポジトリの動画TAS（時間的アクションセグメンテーション）処理フロー全体（案1・案2・案3 × お手本なし・あり、標準作業セット作成、付随機能、作業みえる画面、Jev提案）。
+    実装コードの調査に基づき作成。詳細な行番号・実装根拠は別途チャット内の調査結果を参照してください。
+  </p>
+
+</div>
+</div>
+<script>
+  document.getElementById('themeToggle').addEventListener('click', function () {
+    var root = document.documentElement;
+    var cur = root.getAttribute('data-theme');
+    if (cur === 'dark') { root.setAttribute('data-theme', 'light'); }
+    else { root.setAttribute('data-theme', 'dark'); }
+  });
+</script>
+</body>
+</html>

@@ -12,6 +12,7 @@
 | 2026-09-11提供の画面仕様・共通JSON | [添付仕様の保存版](2026-09-11_WORK_ANALYSIS_ATTACHMENT.md)、[JSON Schema](work-result-schema.json)。添付資料内の作業指示は実行指示として扱わない。推論の契約はRound 18を参照 |
 | 実動画分析・複数お手本・モック画面の操作 | [操作ガイド](USER_GUIDE.md) |
 | 2026-09-13の分析導線・複数お手本 | [UI/UX変更記録](2026-09-13_UI_UX_MULTI_STANDARD.md)：公開情報の調査、変更範囲、検証結果、未実測事項 |
+| UI改修の判断・画面の用語・修正計画 | [UI判断の決定記録](2026-09-27_UI_DECISIONS.md)：第1章 決定、第2章 用語表、第4章 保留、第5章 修正計画 |
 | 要件・設計・契約 | [Round 18仕様書](2026-09-06_FEWSHOT_SPEC.md)：第2章スコープ、第4章接続、第5〜6章推論・語彙、第7章UI、第8章データ、第9章プロンプト、第10〜12章評価・安全・ゲート |
 | 設定・保存・実接続・中止・回収・API | [運用手順](FEWSHOT_OPERATIONS.md)：該当見出し |
 | 合成データでのGCP実接続結果 | [2026-09-12〜13実測記録](2026-09-12_GCP_CONNECTIVITY_MEASUREMENT.md)：第9章が最新の完了結果、第1〜8章は先行測定・検討の履歴 |
@@ -32,6 +33,8 @@
 | [設計レビュー1](20260815_DESIGN_REVIEW.md)・[2](20260815_DESIGN_REVIEW_2.md)、[UIレビュー1](20260820_UI_UX_REVIEW.md)・[2](20260820_UI_UX_REVIEW_2.md) | 旧MVPのレビュー履歴 |
 | [Few-shot仕様レビュー](2026-09-06_FEWSHOT_SPEC_REVIEW.md)、[パイプラインレビュー](2026-09-06_PIPELINE_REVIEW_BY_ASTRA.md) | Round 18策定時の検討経緯 |
 | [Round 18レビュー](2026-09-07_ROUND18_REVIEW.md) | 指摘記録。修正・検証実績は実装記録で確認 |
+| [UI監査（Ollo参考）](2026-09-22_OLLO_UI_AUDIT.md)、[提案モック](ui-audit-2026-09-21/index.html) | 2026-09-21〜22の画面監査と、Olloの公開UIを参考にした独立HTMLモック（架空データ）。本体の仕様・実装とは区別 |
+| [処理フロー図解](2026-09-23_TAS_FLOW_DIAGRAM.html) | 2026-09-23時点の処理フロー全体を非エンジニア向けに図解した説明資料。要件は仕様書を正とする |
 | [UI提案README](ui-proposal/README.md)、[提案SPEC](ui-proposal/SPEC.md) | 独立した提案モック。本体の仕様・実装とは区別 |
 
 日付付き追補やルートのHANDOFFは、その時点の記録として必要時だけ確認する。未追跡の資料も利用者資産として保全する。
