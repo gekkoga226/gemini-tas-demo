@@ -45,6 +45,7 @@ html{scroll-padding-top:76px}main{max-width:1440px;padding:24px 28px 56px;margin
 .segment-row.selected{background:transparent}.segment-row.current{background:#dcebfc}.segment-row.current.selected{background:#d3e4fa}
 @media(hover:hover) and (pointer:fine){.segment-row.selected:hover{background:var(--surface-hover)}.segment-row.current:hover{background:#cfe1f8}}
 @media(prefers-reduced-motion:no-preference){.segment-row{transition:background-color .18s ease}}
+.review-history-list{list-style:none;margin:8px 0 0;padding:0;display:grid;gap:8px;max-height:260px;overflow:auto}.review-history-list li{padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:#fff;font-size:13px}.review-history-list .meta{color:var(--muted);font-size:12px}.review-history-list .memo{margin:4px 0 0;white-space:pre-wrap;overflow-wrap:anywhere}.review-history-list .memo.empty{color:var(--muted)}
 .mock-result-warning strong{display:block;margin-bottom:4px}.mock-result-warning code{font-size:12px}
 /* 2026-09-24: 動画の真下に時間チャート、動画の右横に作業ラベル一覧を置く。
    動画枠は黒帯を出さずに映像の高さに合わせ、チャートを見出し直後へ、補足の通知はチャートの下へ移す。

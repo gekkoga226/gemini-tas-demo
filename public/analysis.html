@@ -161,8 +161,8 @@
           <button id="downloadPrediction" class="button secondary" type="button">AI予測JSON</button>
           <button id="downloadReviewed" class="button primary" type="button">確認済みJSONを保存</button>
         </div>
-        <label>確認・修正の担当者<input id="reviewEditor" value="ローカル確認者"></label><button id="saveReviewButton" class="button secondary" type="button">修正を履歴に保存</button>
-        <p id="reviewHistory" class="hint"></p><p class="hint">確認済みJSONにもAI原本全体を original_result として同梱します（方式・入力ハッシュ・版・共有元・候補と根拠・モック表示）。修正後の区間は segments、確認者・日時・変更内容も保存します。候補と根拠はAI原本の記録です。推論原本は上書きしません。</p>
+        <label>確認・修正の担当者<input id="reviewEditor" value="ローカル確認者"></label><label>メモ（任意・保存1回ごと）<textarea id="reviewComment" rows="2" maxlength="1000" placeholder="例：部品待ちの区間を確認し、終わりを部品が届いた時点に合わせた。"></textarea></label><button id="saveReviewButton" class="button secondary" type="button">修正を履歴に保存</button>
+        <p id="reviewHistory" class="hint"></p><ol id="reviewHistoryList" class="review-history-list"></ol><p class="hint">確認済みJSONにもAI原本全体を original_result として同梱します（方式・入力ハッシュ・版・共有元・候補と根拠・モック表示）。修正後の区間は segments、確認者・日時・メモ（comment）・変更内容も保存します。候補と根拠はAI原本の記録です。推論原本は上書きしません。</p>
       </section>
       <details id="resultAnalyticsDisclosure" class="card result-analytics"><summary>時間内訳と集計を見る</summary><section id="resultAnalytics"></section></details>
     </section>

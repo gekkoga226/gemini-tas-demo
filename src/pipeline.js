@@ -353,7 +353,7 @@ export class TasService {
   }
   async approveVocabulary(runId,body) {const r=await this.store.read(`runs/${safeId(runId)}/run.json`);demand(r.job_kind==='vocabulary_extract'&&r.status==='awaiting_approval','NOT_AWAITING_APPROVAL','確認待ち語彙を指定してください。');const draft=await this.store.read(`runs/${runId}/vocabulary-draft.json`);demand(body.vocabulary.source_pdf_sha256===draft.extraction.pdf_sha256,'SOURCE_HASH_MISMATCH','標準書の出自を維持してください。');const asset=await this.registerVocabulary(body.vocabulary,body.discriminators,{approved_by:body.approved_by,extraction:draft.extraction});r.status='succeeded';r.finished_at=now();r.vocabulary_ref=asset.ref;await this.saveRun(r);return asset;}
   async saveReview(runId,body) {
-    const source=await this.result(runId),run=await this.store.read(`runs/${runId}/run.json`);demand(typeof body.editor==='string'&&body.editor.trim(),'REVIEWER_REQUIRED','確認者を入力してください。');demand(body.original_result_sha256===sha256(source),'RESULT_HASH_MISMATCH','元結果が一致しません。履歴を開き直してください。',409);
+    const source=await this.result(runId),run=await this.store.read(`runs/${runId}/run.json`);demand(typeof body.editor==='string'&&body.editor.trim(),'REVIEWER_REQUIRED','確認者を入力してください。');const comment=body.comment??'';demand(typeof comment==='string'&&comment.trim().length<=1000,'INVALID_REVIEW','メモは1000文字以内の文字列で入力してください。');demand(body.original_result_sha256===sha256(source),'RESULT_HASH_MISMATCH','元結果が一致しません。履歴を開き直してください。',409);
     demand(Array.isArray(body.segments),'INVALID_REVIEW','修正区間の配列が必要です。');let lastEnd=0;const ids=new Set();const vocabulary=run.snapshot.vocabulary;
     const segments=body.segments.map(s=>{
       demand(Object.keys(s).every(k=>['segment_id','start_s','end_s','job_no','job_title','page_number'].includes(k)),'INVALID_REVIEW','修正できない項目が含まれています。');
@@ -361,7 +361,7 @@ export class TasService {
       const label=vocabulary.labels.find(l=>l.job_no===s.job_no&&l.job_title===s.job_title);demand(label,'INVALID_REVIEW','作業ラベルは語彙から選択してください。');
       const original=source.segments.find(x=>x.segment_id===s.segment_id);return {...(original??{segment_id:s.segment_id,observation:null,human_added:true}),...s,page_number:label.page_number};
     });
-    const review={schema_version:'reviewed-result.v1',original_result:source,review_id:id(),original_run_id:runId,original_result_sha256:sha256(source),editor:body.editor.trim(),created_at:now(),mock:source.mock,data_origin:source.data_origin,segments,changes:[]};
+    const review={schema_version:'reviewed-result.v1',original_result:source,review_id:id(),original_run_id:runId,original_result_sha256:sha256(source),editor:body.editor.trim(),...(comment.trim()?{comment:comment.trim()}:{}),created_at:now(),mock:source.mock,data_origin:source.data_origin,segments,changes:[]};
     for(const original of source.segments){const after=segments.find(s=>s.segment_id===original.segment_id)??null;if(sha256(original)!==sha256(after))review.changes.push({segment_id:original.segment_id,before:original,after});}
     for(const after of segments)if(!source.segments.some(s=>s.segment_id===after.segment_id))review.changes.push({segment_id:after.segment_id,before:null,after});
     await this.store.immutable(`runs/${runId}/reviews/${review.review_id}/review.json`,review);return review;

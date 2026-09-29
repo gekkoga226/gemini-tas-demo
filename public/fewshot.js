@@ -13,7 +13,7 @@ const costText=c=>c?.total===null||c?.total===undefined?'不明（未測定／�
 export function createWorkflow({state,$,render,setStatus,toast,renderDirty,seek,selectSegment,applyPendingDetail}) {
   let config=null,sets=[],media=[],vocabularies=[],mode='few_shot',activeRun=null,result=null,display=null,review=null,buildId=null,originalReview=[];
   let standardSegments=[],standardExamples=[],standardImages=[],lastStandardId=null,lastActualId=null,syncBusy=false;
-  let vocabularyRunId=null,editor=null,submitting=false,pendingUploads=0,resultSet=null,inspectedSet=null,restoreObservedInputs=false;
+  let vocabularyRunId=null,editor=null,submitting=false,pendingUploads=0,resultSet=null,inspectedSet=null,restoreObservedInputs=false,reviewList=[];
   const busy=()=>state.running||submitting||pendingUploads>0;
   async function api(url,body,method) {const response=await fetch(url,{method:method||(body?'POST':'GET'),headers:body?{'content-type':'application/json','x-local-token':state.session.token}:{},...(body?{body:JSON.stringify(body)}:{})});const data=await response.json();if(!response.ok){const error=new Error(`${data.message} (${data.code})`);error.status=response.status;throw error;}return data;}
   const safely=fn=>async(...args)=>{try{await fn(...args);}catch(e){toast(e.message);setStatus('error','操作を完了できません',e.message);}};
@@ -117,6 +117,7 @@ export function createWorkflow({state,$,render,setStatus,toast,renderDirty,seek,
     const savedReview=(state.dirty||state.formDirty)?await persistReview(false):null;
     if(savedReview?.original_run_id===runId)reviews.push(savedReview);
     if(state.dirty||state.formDirty)throw new Error('保存中に新しい入力がありました。現在の入力を保存してから結果を開いてください。');
+    if(result?.run_id!==runId)$('#reviewComment').value='';
     result=nextResult;resultSet=set;display=nextDisplay;review=reviews.at(-1)??null;
     state.result=result;state.prediction=structuredClone(display.prediction);state.reviewed=structuredClone(display.prediction);originalReview=review?.segments??result.segments;
     if(review)state.reviewed=review.segments.map(s=>{const d=display.prediction.find(x=>x.segment_id===s.segment_id);return {...(d??{work_content:'人による追加',hand_movement:'-',tools_and_parts:'-'}),segment_id:s.segment_id,start_time:secondsToTime(s.start_s),end_time:secondsToTime(s.end_s),duration_seconds:Math.floor(s.end_s)-Math.floor(s.start_s),job_no:s.job_no,job_title:s.job_title,page_number:s.page_number};});
@@ -132,7 +133,7 @@ export function createWorkflow({state,$,render,setStatus,toast,renderDirty,seek,
     if(hasComparison)renderStandardCharts($('#resultAnalytics'),set,{actual:result,onSelect:(source,segment)=>{if(source.kind==='standard'){$('#standardSource').value=source.source_id;chooseResultSource();$('#standardPlayer').currentTime=segment.start_s;render();}else seek(segment.start_s);}});
     else $('#resultAnalytics').replaceChildren();
     $('#standardInferenceNotice').textContent=result.examples_used?'上段：公開済み標準セットのお手本。実作業GTは表示しません。':'お手本なし：上段は表示用です。標準記述・標準画像は推論へ送信していません。';
-    $('#reviewHistory').textContent=reviews.length?`修正履歴 ${reviews.length}件 ／ 最終確認：${review.editor} ／ ${new Date(review.created_at).toLocaleString()}`:'人による確認はまだ保存されていません。';
+    reviewList=reviews;renderReviewHistory();
     if(restoreInputs){$('#standardSet').value=result.standard_set_id??'';$('#vocabularySelect').value=vocabularyRef??'';$('#registeredVideo').value=result.input.video_id;$('#analysisStrategy').value=result.analysis_strategy;$('#consentConfirmed').checked=false;mode=result.analysis_mode;restoreSettings(result.execution);}
     modeTabs();render();
   }
@@ -149,7 +150,11 @@ export function createWorkflow({state,$,render,setStatus,toast,renderDirty,seek,
   function exactReviewed() {
     return state.reviewed.map(s=>{const original=originalReview.find(x=>x.segment_id===s.segment_id)??result.segments.find(x=>x.segment_id===s.segment_id);return {segment_id:s.segment_id??(s.segment_id=`human-${crypto.randomUUID()}`),start_s:original&&s.start_time===secondsToTime(original.start_s)?original.start_s:timeToSeconds(s.start_time),end_s:original&&s.end_time===secondsToTime(original.end_s)?original.end_s:timeToSeconds(s.end_time),job_no:s.job_no,job_title:s.job_title,page_number:s.page_number};});
   }
-  async function persistReview(show=true) {if(!result)return null;if(!applyPendingDetail())throw new Error('入力を修正してから保存してください。未反映の内容は画面に残っています。');const segments=exactReviewed(),saving=JSON.stringify(state.reviewed);review=await api(`/api/analysis-runs/${result.run_id}/reviews`,{editor:$('#reviewEditor').value,original_result_sha256:display.original_result_sha256,segments});state.dirty=JSON.stringify(state.reviewed)!==saving;originalReview=review.segments;renderDirty();$('#reviewHistory').textContent=`修正を保存しました：${review.editor} ／ ${new Date(review.created_at).toLocaleString()}`;if(show)toast('推論原本を残して修正履歴を保存しました。');return review;}
+  function renderReviewHistory() {
+    $('#reviewHistory').textContent=reviewList.length?`修正履歴 ${reviewList.length}件（新しい順）`:'人による確認はまだ保存されていません。';
+    $('#reviewHistoryList').innerHTML=reviewList.slice().reverse().map(r=>`<li><span class="meta">${esc(new Date(r.created_at).toLocaleString())} ／ 確認者：${esc(r.editor)}</span><p class="memo${r.comment?'':' empty'}">${r.comment?esc(r.comment):'（メモなし）'}</p></li>`).join('');
+  }
+  async function persistReview(show=true) {if(!result)return null;if(!applyPendingDetail())throw new Error('入力を修正してから保存してください。未反映の内容は画面に残っています。');const segments=exactReviewed(),saving=JSON.stringify(state.reviewed);review=await api(`/api/analysis-runs/${result.run_id}/reviews`,{editor:$('#reviewEditor').value,comment:$('#reviewComment').value,original_result_sha256:display.original_result_sha256,segments});state.dirty=JSON.stringify(state.reviewed)!==saving;originalReview=review.segments;renderDirty();$('#reviewComment').value='';reviewList=[...reviewList,review];renderReviewHistory();if(show)toast('推論原本を残して修正履歴を保存しました。');return review;}
   async function download(type) {if(!result)return;const data=type==='reviewed'?await persistReview(false):result,a=document.createElement('a');a.href=type==='reviewed'?`/api/analysis-runs/${result.run_id}/reviews/${data.review_id}?download=1`:`/api/analysis-runs/${result.run_id}/result?download=1`;a.download=`${result.mock?'MOCK_':''}${result.run_id}_${type}.json`;document.body.append(a);a.click();a.remove();toast(`${type==='reviewed'?'確認・修正済み':'推論原本'}JSONを出力しました。`);}
   function extras() {
     if(!result)return;
