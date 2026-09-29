@@ -245,7 +245,10 @@ function keepRowVisible(list, row) {
   else if (rect.bottom > bounds.bottom) list.scrollTop += rect.bottom - bounds.bottom;
 }
 function renderTimeline() {
-  const segments = currentSegments(); const duration = axisEnd(); const container = $("#timelineSegments"); container.replaceChildren(); const trackWidth = sizeTimelineTrack();
+  const segments = currentSegments(); const duration = axisEnd(); const container = $("#timelineSegments");
+  const focused = container.contains(document.activeElement) ? document.activeElement : null; const focusedIndex = focused?.closest(".segment-block")?.dataset.segmentIndex;
+  const focusedPart = focused?.classList.contains("drag-handle") ? `.drag-handle.${focused.classList.contains("left") ? "left" : "right"}` : ".segment-bar";
+  container.replaceChildren(); const trackWidth = sizeTimelineTrack();
   renderRuler();
   segments.forEach((segment, index) => {
     const start = timeToSeconds(segment.start_time) ?? 0; const end = timeToSeconds(segment.end_time) ?? start; const width = ((end - start) / duration) * 100; const pixelWidth = (width / 100) * trackWidth;
@@ -276,6 +279,7 @@ function renderTimeline() {
     }
     container.append(block);
   });
+  if (focusedIndex != null) container.querySelector(`.segment-block[data-segment-index="${focusedIndex}"] ${focusedPart}`)?.focus({ preventScroll: true });
   renderTimelineZoom(); renderPlayback();
 }
 function applyBoundary(index, side, seconds) { return Segments.applyBoundary(state.reviewed, index, side, seconds, maximumEnd()); }
@@ -328,7 +332,7 @@ function renderList() {
     row.addEventListener("click", () => selectSegment(index)); list.append(row);
   });
   const selectedRow = list.querySelector(".segment-row.selected");
-  if (selectedRow) selectedRow.scrollIntoView({ block: "nearest", inline: "nearest" });
+  if (selectedRow) keepRowVisible(list, selectedRow);
   if (focusedIndex != null) list.querySelector(`[data-segment-index="${focusedIndex}"]`)?.focus({preventScroll:true});
 }
 function renderDetail() {
