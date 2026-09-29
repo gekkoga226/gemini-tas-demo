@@ -5,7 +5,7 @@ export function standardSources(set) {
 
 export function summarizeStandards(set, actual=null) {
   const sources=standardSources(set).map(s=>({...s,kind:'standard'}));
-  if(actual)sources.push({source_id:`run-${actual.run_id}`,name:'今回の分析（推論原本）',kind:'actual',source_video:{video_id:actual.input.video_id,duration_s:actual.input.duration_s},display_segments:actual.segments});
+  if(actual)sources.push({source_id:`run-${actual.run_id}`,name:'今回の分析（自動判定）',kind:'actual',source_video:{video_id:actual.input.video_id,duration_s:actual.input.duration_s},display_segments:actual.segments});
   const labels=new Map((set?.vocabulary?.labels??[]).map(l=>[l.job_no,l.job_title]));
   for(const source of sources)for(const s of source.display_segments)labels.set(s.job_no,s.job_title);
   const processes=[...labels].map(([job_no,job_title])=>{

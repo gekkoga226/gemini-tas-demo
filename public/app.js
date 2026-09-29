@@ -340,14 +340,14 @@ function renderDetail() {
   const panel = $("#detailPanel"); const segment = currentSegments()[state.selected];
   if (!segment) { panel.innerHTML = '<p class="empty-state">区間を選択してください。</p>'; return; }
   const readOnly = state.view !== "reviewed";
-  panel.innerHTML = `<form id="detailForm"><div class="detail-heading"><div><small>${readOnly ? "AI予測（読み取り専用）" : "選択中の区間（編集できます）"}</small><strong>区間${String(state.selected + 1).padStart(2, "0")}｜${escapeHtml(segment.job_title)}</strong></div><span>${timeToSeconds(segment.end_time) - timeToSeconds(segment.start_time)}秒</span></div><div class="form-grid">
+  panel.innerHTML = `<form id="detailForm"><div class="detail-heading"><div><small>${readOnly ? "自動判定（読み取り専用）" : "選択中の区間（編集できます）"}</small><strong>区間${String(state.selected + 1).padStart(2, "0")}｜${escapeHtml(segment.job_title)}</strong></div><span>${timeToSeconds(segment.end_time) - timeToSeconds(segment.start_time)}秒</span></div><div class="form-grid">
     <label>開始時刻<input name="start_time" value="${escapeHtml(segment.start_time)}" pattern="\\d{2}:\\d{2}:\\d{2}" ${readOnly ? "disabled" : ""}></label>
     <label>終了時刻<input name="end_time" value="${escapeHtml(segment.end_time)}" pattern="\\d{2}:\\d{2}:\\d{2}" ${readOnly ? "disabled" : ""}></label>
     <label>Job No.<input name="job_no" value="${escapeHtml(segment.job_no)}" ${readOnly ? "disabled" : ""}></label>
-    <label>標準書ページ<input name="page_number" value="${escapeHtml(segment.page_number)}" ${readOnly ? "disabled" : ""}></label>
+    <label>作業標準書のページ<input name="page_number" value="${escapeHtml(segment.page_number)}" ${readOnly ? "disabled" : ""}></label>
     <label class="wide">作業タイトル<input name="job_title" value="${escapeHtml(segment.job_title)}" ${readOnly ? "disabled" : ""}></label>
   </div><div class="readonly-grid">
-    <div class="readonly-field">作業時間<span>${timeToSeconds(segment.end_time) - timeToSeconds(segment.start_time)}秒${state.view === "prediction" && segment.duration_seconds !== timeToSeconds(segment.end_time) - timeToSeconds(segment.start_time) ? `（AI値 ${segment.duration_seconds}秒）` : ""}</span></div>
+    <div class="readonly-field">作業時間<span>${timeToSeconds(segment.end_time) - timeToSeconds(segment.start_time)}秒${state.view === "prediction" && segment.duration_seconds !== timeToSeconds(segment.end_time) - timeToSeconds(segment.start_time) ? `（自動判定 ${segment.duration_seconds}秒）` : ""}</span></div>
     <div class="readonly-field">作業内容<span>${escapeHtml(segment.work_content)}</span></div>
     <div class="readonly-field">手の動き<span>${escapeHtml(segment.hand_movement)}</span></div>
     <div class="readonly-field">治工具・部品<span>${escapeHtml(segment.tools_and_parts)}</span></div>
