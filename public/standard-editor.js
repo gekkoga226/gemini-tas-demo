@@ -16,7 +16,7 @@ export function createStandardEditor({$,api,uploadVideo,getMedia,getVocabularies
   }
   function update() {
     const reasons=[];
-    if(!vocabulary())reasons.push('確認済みの作業名一覧（語彙）を選んでください');
+    if(!vocabulary())reasons.push('確認済みの作業名一覧を選んでください');
     if(!$('#setName').value.trim())reasons.push('セット名を入力してください');
     if(new Set(sources.map(s=>s.videoId).filter(Boolean)).size!==sources.filter(s=>s.videoId).length)reasons.push('同じ動画が重複しています');
     for(const [i,s] of sources.entries()){const error=errors(s);if(error)reasons.push(`お手本${i+1}：${error}`);const status=$('#buildSources').querySelector(`[data-source-key="${s.key}"] .source-error`);if(status)status.textContent=s.error||error||'作業区間を入力済み';}
@@ -34,7 +34,7 @@ export function createStandardEditor({$,api,uploadVideo,getMedia,getVocabularies
       <div class="form-grid"><label>お手本の名前<input data-field="name" value="${esc(s.name)}" maxlength="200" placeholder="例：組立作業・1回目"></label><label>登録済みのお手本動画<select data-field="video" ${s.uploading?'disabled':''}><option value="">動画を選択</option>${getMedia().map(m=>`<option value="${esc(m.video_id)}" ${m.video_id===s.videoId?'selected':''}>${esc(m.display_name)}（${m.duration_s}秒）</option>`).join('')}</select></label><label>新しいお手本動画を登録<input type="file" accept="video/mp4,.mp4" data-field="upload" ${s.uploading?'disabled':''}></label></div>
       <p class="source-status">${s.uploading?'ローカルへ登録中':video?`${esc(video.display_name)} ／ ${video.duration_s}秒 ／ 動画ID：${esc(video.video_id)}`:'MP4を登録、または登録済み動画を選択してください。'}</p>
       ${s.gt?`<p>正解区間JSON：${esc(s.gtFileName)} ／ ${s.gt.segments?.length??0}区間</p><button type="button" class="icon-button" data-action="manual">表で入力し直す</button>`:`<div class="table-scroll"><table class="gt-table"><caption>確認済みの作業区間（秒）</caption><thead><tr><th scope="col">開始</th><th scope="col">終了</th><th scope="col">作業名</th><th scope="col">操作</th></tr></thead><tbody>${s.intervals.map((row,j)=>`<tr data-interval="${j}"><td><input aria-label="お手本${i+1} 区間${j+1}の開始秒" type="number" min="0" step="any" data-field="start" value="${row.start??''}"></td><td><input aria-label="お手本${i+1} 区間${j+1}の終了秒" type="number" min="0" step="any" data-field="end" value="${row.end??''}"></td><td><select aria-label="お手本${i+1} 区間${j+1}の作業名" data-field="job"><option value="">作業名を選択</option>${labels.map(l=>`<option value="${esc(l.job_no)}" ${row.job===l.job_no?'selected':''}>${esc(l.job_no)} ${esc(l.job_title)}</option>`).join('')}</select></td><td><button type="button" class="remove-interval" data-action="remove-interval" ${s.intervals.length===1?'disabled':''}>外す</button></td></tr>`).join('')}</tbody></table></div><button type="button" class="icon-button" data-action="add-interval" ${!video?'disabled':''}>＋ 最後の区間を分ける</button>`}
-      <details><summary>正解区間JSON（GT）を読み込む</summary><p class="hint">選択した動画ID・長さと一致する、標準作成専用のJSONを指定してください。</p><input type="file" accept=".json,application/json" data-field="gt" aria-label="お手本${i+1}の正解区間JSON"></details>
+      <details><summary>正解区間JSON（GT）を読み込む</summary><p class="hint">選択した動画ID・長さと一致する、お手本セット作成専用のJSONを指定してください。</p><input type="file" accept=".json,application/json" data-field="gt" aria-label="お手本${i+1}の正解区間JSON"></details>
       <p class="source-error" role="status"></p></article>`;
     }).join('');update();
   }

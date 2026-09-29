@@ -417,9 +417,8 @@ dialog h2 { margin: 3px 0 8px; }
 .dialog-kicker {
   margin: 0;
   color: var(--accent);
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: .16em;
+  font-size: var(--text-caption);
+  font-weight: 700;
 }
 
 .dialog-description {
@@ -437,11 +436,17 @@ dialog h2 { margin: 3px 0 8px; }
 
 .form-error {
   min-height: 18px;
-  color: #ff9a9a;
+  color: var(--danger);
   font-size: var(--text-caption);
 }
 
 .confirm-dialog { width: min(460px, calc(100vw - 28px)); }
+
+.confirm-dialog.danger #confirmAccept {
+  border-color: var(--danger);
+  background: var(--danger);
+  color: #fff;
+}
 
 .toast {
   position: fixed;
