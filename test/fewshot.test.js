@@ -38,3 +38,13 @@ test('run status and history return the vocabulary reference used by the run, fo
   assert.equal((await service.status(zero.run_id)).vocabulary_ref,demo.vocabulary_ref);assert.equal((await service.status(few.run_id)).vocabulary_ref,null);
   assert.equal((await service.history()).find(r=>r.run_id===zero.run_id).vocabulary_ref,demo.vocabulary_ref);
 });
+test('a review save may carry one memo (comment): trimmed, optional, at most 1000 characters, listed with the history, original unchanged',async t=>{
+  const {service,config,demo}=await fixture(t),run=await service.createAnalysis({client_request_id:id(),input_video_id:demo.actual_video_id,standard_set_id:demo.standard_set_id,analysis_strategy:'text_only',analysis_mode:'few_shot',settings:defaultSettings(config),consent_confirmed:true});
+  assert.equal((await waitRun(service,run.run_id)).status,'succeeded');
+  const result=await service.result(run.run_id),segments=result.segments.map(({segment_id,start_s,end_s,job_no,job_title,page_number})=>({segment_id,start_s,end_s,job_no,job_title,page_number})),base={editor:'確認者',original_result_sha256:sha256(result),segments};
+  const withMemo=await service.saveReview(run.run_id,{...base,comment:'  部品待ちの終わりを確認した。  '}),withoutMemo=await service.saveReview(run.run_id,{...base,comment:'   '}),legacy=await service.saveReview(run.run_id,base);
+  assert.equal(withMemo.comment,'部品待ちの終わりを確認した。');assert.equal(Object.hasOwn(withoutMemo,'comment'),false);assert.equal(Object.hasOwn(legacy,'comment'),false);
+  await assert.rejects(service.saveReview(run.run_id,{...base,comment:'あ'.repeat(1001)}),{code:'INVALID_REVIEW'});await assert.rejects(service.saveReview(run.run_id,{...base,comment:42}),{code:'INVALID_REVIEW'});
+  const listed=await service.reviews(run.run_id);assert.equal(listed.length,3);assert.equal(listed.find(r=>r.review_id===withMemo.review_id).comment,'部品待ちの終わりを確認した。');
+  assert.equal(sha256(await service.result(run.run_id)),sha256(result));
+});
