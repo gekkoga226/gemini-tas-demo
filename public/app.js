@@ -442,7 +442,10 @@ function renderList() {
     row.innerHTML = `<span class="segment-number">${String(index + 1).padStart(2, "0")}</span><span class="row-copy"><strong>${escapeHtml(segment.job_title)}</strong><small>${escapeHtml(segment.start_time)}–${escapeHtml(segment.end_time)} ・ ${duration}秒 ・ No.${escapeHtml(segment.job_no)}</small></span><span class="row-state">${tags}</span>`;
     row.addEventListener("click", () => selectSegment(index)); list.append(row);
   });
-  if (!rows.length) list.innerHTML = '<p class="empty-state">表示する区間はありません。</p>';
+  if (!rows.length) {
+    list.innerHTML = segments.length ? '<div class="empty-state"><h3>表示する区間はありません</h3><p>絞り込みを戻すと、ほかの区間を確認できます。</p><button type="button" class="button secondary" id="showAllSegments">すべて表示</button></div>' : '<div class="empty-state"><h3>区間はありません</h3><p>この表示元には区間がありません。自動判定・修正後を切り替えるか、実行履歴で結果の状態を確認してください。</p></div>';
+    $('#showAllSegments')?.addEventListener('click',()=>{state.filter='all';state.listPins=null;renderList();$('[data-filter="all"]').focus({preventScroll:true});});
+  }
   const selectedRow = list.querySelector(".segment-row.selected");
   if (selectedRow) keepRowVisible(list, selectedRow);
   if (focusedIndex != null) list.querySelector(`[data-segment-index="${focusedIndex}"]`)?.focus({preventScroll:true});
@@ -567,17 +570,18 @@ function render() {
   renderTimeline(); renderList(); renderDetail(); renderDirty(); workflow.extras();
 }
 function switchView(view) {
-  if (!applyPendingDetail()) return;
+  if (!applyPendingDetail()) return false;
   state.view = view; state.selected = Math.min(state.selected, currentSegments().length - 1);
   state.listPins = null;
   state.warnings = view === "reviewed" ? validateSegments(state.reviewed) : clone(state.predictionWarnings);
   render();
+  return true;
 }
 function visiblePanelTabs() { return [...document.querySelectorAll(".panel-tab")].filter((tab) => !tab.hidden); }
 function selectPanel(name, focus = false) {
   state.panel = name;
-  for (const tab of visiblePanelTabs()) {
-    const selected = tab.id === `tab-${name}`;
+  for (const tab of document.querySelectorAll(".panel-tab")) {
+    const selected = !tab.hidden && tab.id === `tab-${name}`;
     tab.setAttribute("aria-selected", String(selected)); tab.tabIndex = selected ? 0 : -1;
   }
   for (const body of document.querySelectorAll(".panel-body")) body.hidden = body.id !== `panel-${name}`;
@@ -598,7 +602,7 @@ function bindDrop(zoneSelector, inputSelector, handler) {
   for (const eventName of ["dragleave", "drop"]) zone.addEventListener(eventName, (event) => { event.preventDefault(); zone.classList.remove("dragover"); });
   zone.addEventListener("drop", (event) => handler(event.dataTransfer.files[0]));
 }
-const workflow=createWorkflow({state,$,render,setStatus,toast,renderDirty,hasUnsaved:()=>unsaved().any,seek,selectSegment,pendingDetailStop,selectPanel});
+const workflow=createWorkflow({state,$,render,setStatus,toast,renderDirty,hasUnsaved:()=>unsaved().any,seek,selectSegment,pendingDetailStop,selectPanel,switchView});
 function initialize(){return workflow.initialize();}
 
 bindDrop("#videoDrop", "#videoInput", selectVideo);
@@ -616,6 +620,8 @@ $("#timelineZoomIn").addEventListener("click", () => setTimelineZoom(TIMELINE_ZO
 $("#videoPlayer").addEventListener("timeupdate", (event) => { state.currentTime = event.currentTarget.currentTime; renderPlayback(true); });
 $("#reviewedTab").addEventListener("click", () => switchView("reviewed"));
 $("#predictionTab").addEventListener("click", () => switchView("prediction"));
+$('#openUsage').addEventListener('click',()=>$('#usageDialog').showModal());
+$('#closeUsage').addEventListener('click',()=>$('#usageDialog').close());
 bindRadioGroups();
 followVisualOrder({panel: $("#workspace > .result-panel"), timebar: $("#workspace > .timebar")});
 $("#addButton").addEventListener("click", openAddDialog); $("#confirmAdd").addEventListener("click", addSegment); $("#undoButton").addEventListener("click", undo); $("#redoButton").addEventListener("click", redo);

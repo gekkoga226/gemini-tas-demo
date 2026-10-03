@@ -154,7 +154,12 @@ export function createAppServer(config = loadConfig(), options = {}) {
       response.end();
       return;
     }
-    const relative = url.pathname === "/review.html" ? "index.html" : url.pathname.slice(1);
+    if (url.pathname === "/review.html") {
+      response.writeHead(302, { location: "/analysis.html?new=1", "cache-control": "no-store" });
+      response.end();
+      return;
+    }
+    const relative = url.pathname.slice(1);
     const absolute = path.resolve(PUBLIC_ROOT, relative);
     if (!absolute.startsWith(`${PUBLIC_ROOT}${path.sep}`) && absolute !== path.join(PUBLIC_ROOT, "index.html")) {
       return writeJson(response, 404, { code: "NOT_FOUND", message: "見つかりません。" });

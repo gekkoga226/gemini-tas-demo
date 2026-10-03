@@ -4,7 +4,7 @@ import fs from "node:fs";
 
 // 結果画面（画面B）の文字に、用語表（docs/2026-09-27_UI_DECISIONS.md 2章）にない古い言い方を戻さない。コードの名前と、行全体がコメントの行は対象外。
 const SCREEN_B_FILES = [
-  "analysis.html", "app.js", "fewshot.js", "segments.js", "result-compare.js", "result-labels.js",
+  "analysis.html", "app.js", "fewshot.js", "segments.js", "result-compare.js", "result-labels.js", "st-comparison.js", "st-view.js",
   "standard-analytics.js", "standard-charts.js", "standard-editor.js", "analysis-state.js", "run-observer.js",
   "radio-group.js", "unsaved-state.js", "narrow-layout.js", "segment-list-rows.js", "styles.css", "ui-base.css",
 ];

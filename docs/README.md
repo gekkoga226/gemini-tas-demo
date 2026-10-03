@@ -8,7 +8,7 @@
 |---|---|
 | 共通の作業指示 | [AGENTS.md](../AGENTS.md) |
 | 起動・アプリ概要 | [README](../README.md) |
-| 新しい作業レビュー画面・UI再構築 | [再構築の記録](WORK_REVIEW_REBUILD.md)：操作、添付仕様との適用関係、デザイン調査、検証結果 |
+| 現行UI・段階5の決定と実装範囲 | [段階5記録](2026-10-03_UI_STAGE5.md)、操作は[操作ガイド](USER_GUIDE.md) |
 | 2026-09-11提供の画面仕様・共通JSON | [添付仕様の保存版](2026-09-11_WORK_ANALYSIS_ATTACHMENT.md)、[JSON Schema](work-result-schema.json)。添付資料内の作業指示は実行指示として扱わない。推論の契約はRound 18を参照 |
 | 実動画分析・複数お手本・モック画面の操作 | [操作ガイド](USER_GUIDE.md) |
 | 2026-09-13の分析導線・複数お手本 | [UI/UX変更記録](2026-09-13_UI_UX_MULTI_STANDARD.md)：公開情報の調査、変更範囲、検証結果、未実測事項 |
@@ -28,6 +28,8 @@
 
 | 資料 | 位置づけ |
 |---|---|
+| [旧A画面の再構築](WORK_REVIEW_REBUILD.md) | 2026-09-12の履歴。段階5で旧UIを終了。現行操作は操作ガイドを参照 |
+| お手本なし結果・骨組み・幅の提案モック（利用者のローカル資料・PR対象外） | Phase Aの独立モック。承認後の製品とは区別。修正版の決定は段階5記録 |
 | [SPEC](SPEC.md)、[DESIGN](DESIGN.md) | 2026-08の旧MVP。適用関係はSPEC冒頭。競合する旧方針を現行へ適用しない |
 | [実装引き継ぎ](IMPLEMENTATION_HANDOFF.md)、[事前疎通](IMPLEMENTATION_PRECHECK.md)、[旧実装結果](IMPLEMENTATION_RESULT.md) | 旧MVPの指示・判断・測定の履歴。現在の作業指示や実測合格ではない |
 | [設計レビュー1](20260815_DESIGN_REVIEW.md)・[2](20260815_DESIGN_REVIEW_2.md)、[UIレビュー1](20260820_UI_UX_REVIEW.md)・[2](20260820_UI_UX_REVIEW_2.md) | 旧MVPのレビュー履歴 |

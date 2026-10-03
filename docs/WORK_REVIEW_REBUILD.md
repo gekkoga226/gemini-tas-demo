@@ -1,5 +1,7 @@
 # 作業レビュー画面の再構築
 
+2026-10-03追記：本書は旧A画面の実装履歴です。段階5でAのUI・結果JSON読込・CSV・架空120分サンプルを終了し、旧 `/review.html` はBの新しい分析へ転送します。現行操作は[操作ガイド](USER_GUIDE.md)、決定と範囲は[段階5記録](2026-10-03_UI_STAGE5.md)を参照してください。旧変換APIと互換テストは残し、旧計算コードとJSON例は `test-support/legacy-review/` へ移しました。
+
 2026-09-12。提供された `work_analysis_specification.md`、HTML、ソースZIPを基に、既存Nodeアプリの主画面を再構築した記録。
 
 ## 画面と使い方
@@ -21,7 +23,7 @@
 | 対象 | 適用と今回の実装 |
 | --- | --- |
 | 利用者の作業と4画面 | [添付仕様](2026-09-11_WORK_ANALYSIS_ATTACHMENT.md) のモック範囲を実装 |
-| 共通の結果JSON | `schema_version: "1.0"`。[JSON例](../public/examples/work-result.json) と [Schema](work-result-schema.json) を同梱 |
+| 共通の結果JSON | `schema_version: "1.0"`。[互換テスト用JSON例](../test-support/legacy-review/work-result.json) と [Schema](work-result-schema.json) を同梱 |
 | 原本とレビュー | 編集はモード別の派生データ。`original_modes` と変更前後・隣接区間の履歴を出力する。保存されたRound 18原本は変更しない |
 | 推論、GT隔離、Stage1共有、Stage2時刻不変 | [Round 18仕様](2026-09-06_FEWSHOT_SPEC.md) の既存契約を継続。プロンプト本文と凍結原本を変更していない |
 | 添付の180秒チャンク・前後再確認・候補検索 | 将来の実分析案。今回のモック再構築で実分析へ実装・実測済みとは扱わない |
