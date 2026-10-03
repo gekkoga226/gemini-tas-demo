@@ -66,6 +66,15 @@ export function editWorsened(errorsBefore, errorsAfter, index) {
   return errorsAfter[index].length > errorsBefore[index].length;
 }
 
+// Which of the two time fields to point at when typed times stop a save: the one that is not
+// HH:MM:SS at all, else the one that was changed, else the start time.
+export function pendingTimeField(typed, saved) {
+  const keys = ["start_time", "end_time"];
+  return keys.find((key) => timeToSeconds(typed[key]) === null)
+    ?? keys.find((key) => typed[key] !== saved[key])
+    ?? keys[0];
+}
+
 export function nudgeResult(segments, index, side, direction, step, maximumEnd) {
   const key = side === "left" ? "start_time" : "end_time";
   const previous = timeToSeconds(segments[index][key]);

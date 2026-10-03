@@ -26,18 +26,21 @@ B（`public/analysis.html`）は `public/ui-base.css`（色・余白・角丸・
 
 ## 画面の撮影と自動チェック
 
-`tools/ui-shots/` は Chrome を自動操作して画面を撮影し、画面・幅ごとに「ページの横スクロール」「ボタン・タブ・ラベル等からのはみ出し」「12px未満の文字」「コントラスト4.5:1未満」を数える。Node.js 22以上が必要（組み込みの WebSocket を使う）。外部パッケージは使わない。撮影は別ポートのモックで行い、4173番と `data-real/` は使わない。
+`tools/ui-shots/` は Chrome を自動操作して画面を撮影し、画面・幅ごとに「ページの横スクロール」「ボタン・タブ・ラベル等からのはみ出し」「中身が切れている箱（`overflow` が `hidden`／`clip` の枠より、中身が高さ方向に1px以上はみ出して見えない。スクロールできる枠と、行数を決めて省略する枠は数えない）」「12px未満の文字」「コントラスト4.5:1未満」を数える。Node.js 22以上が必要（組み込みの WebSocket を使う）。外部パッケージは使わない。撮影は別ポートのモックで、空の一時フォルダを `DATA_ROOT` にして行い、4173番・`data-real/`・既存の `data/` は使わない。
 
 ```powershell
-# 別のウィンドウで、別ポートのモックを起動する（画面は閲覧だけ）
-$env:MOCK_MODE = "true"; $env:PORT = "4180"; $env:DATA_ROOT = "data"; npm.cmd start
+# 別のウィンドウで、別ポートのモックを起動する（DATA_ROOT は空の一時フォルダ）
+$env:MOCK_MODE = "true"; $env:PORT = "4180"; $env:DATA_ROOT = "$env:TEMP\tas-mock-data"
+New-Item -ItemType Directory -Force $env:DATA_ROOT | Out-Null
+npm.cmd start
 node tools/ui-shots/shoot.mjs --label 2026-09-28_before
 node tools/ui-shots/shoot.mjs --base http://127.0.0.1:4186 --scenarios page --paths /index.html --viewports 1920x950,400 --strict
 ```
 
-- 既定：接続先 `http://127.0.0.1:4180`、出力先 `.local/ui-shots/<ラベル>/`（PNG・`report.json`・`summary.txt`）、画面幅 1920×950・1600・1280・1000・720・400（高さ1000）、シナリオ `app`（B の新しい分析・実行履歴・お手本ライブラリ・結果（お手本なし／あり／最初の要確認）と、A の動画と作業区間）。一覧は `--help`。
+- 既定：接続先 `http://127.0.0.1:4180`、出力先 `.local/ui-shots/<ラベル>/`（PNG・`report.json`・`summary.txt`）、画面幅 1920×950・1600・1280・1000・720・400（高さ1000）、シナリオ `app`（B の新しい分析・実行履歴・お手本ライブラリ・結果（お手本なし／あり／最初の要確認／メモタブ）と、A の動画と作業区間）。一覧は `--help`。
 - Chrome の場所は `--chrome` か環境変数 `UI_SHOTS_CHROME`（既定 `C:/Program Files/Google/Chrome/Application/chrome.exe`）。ブラウザの作業用フォルダは OS の一時フォルダに作り、終了時に消す。
 - 安全策：4173番・ローカル以外・`/api/health` が mock でない接続先は拒否する。シナリオは画面を開いてスクロールするだけで、接続先以外への通信と GET 以外の通信は遮断して記録する。出力先にファイルがあれば中止する（`--overwrite` で上書き）。
-- 結果画面は、実行履歴で最新の完了分を使う（`--few-run`・`--zero-run` で指定）。該当がなければ省略する。
+- 既存のデータでは起動しない：サーバーは起動しただけで、実行ごとの記録（`run.json`）を書き直す。結果ファイルのある実行は `succeeded`（完了）に、取り消しを求めていた実行は `cancelled`（中断）に、途中で止まっていた実行は `interrupted`（前回処理の中断）に直される（`src/pipeline.js` の起動時の回復処理）。画面を見るだけのときも `data/` などの既存のフォルダは指定せず、上の例のように空の一時フォルダを使う。撮影が終わったらサーバーを止めて、その一時フォルダを削除する。
+- 結果画面は、実行履歴で最新の完了分を使う（`--few-run`・`--zero-run` で指定）。該当がなければ省略する。空の一時フォルダで起動した直後は実行履歴がないので、結果画面も撮るときは、先にモックの画面で「合成サンプルで試す」から分析を実行しておく（操作は [操作ガイド](USER_GUIDE.md)）。
 - 終了コード：0 正常、1 違反あり（`--strict` のとき）、2 指定・環境の誤り、3 撮影できない画面あり。Git Bash では `/` で始まる引数が書き換えられるため、`MSYS_NO_PATHCONV=1` を付ける。
 - 自動チェックは目安で、目視の確認を置き換えない。コントラストは文字の大きさによらず4.5:1で判定し、画像・グラデーション・動画の上の文字と無効化された操作は「対象外」として別に数える。

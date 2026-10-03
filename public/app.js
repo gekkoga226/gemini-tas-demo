@@ -1,12 +1,18 @@
 import * as Segments from "./segments.js";
 import {createWorkflow} from "./fewshot.js";
+import {pairedStandard, alignmentOffset, bandPairs, timebarAxis, timebarScale, xAtSeconds, secondsAtPointer} from "./result-compare.js";
+import {bindRadioGroups} from "./radio-group.js";
+import {unsavedState} from "./unsaved-state.js";
+import {followVisualOrder} from "./narrow-layout.js";
+import {listRows} from "./segment-list-rows.js";
 
 const SEGMENT_KEYS = ["start_time", "end_time", "duration_seconds", "job_no", "page_number", "job_title", "work_content", "hand_movement", "tools_and_parts"];
-// 区間色は分類を意味しないため統一し、番号で区別する。
-// 選択、現在位置、警告はそれぞれ別の視覚表現を使う。
-const COLORS = ["#245f7d"];
-const MIN_SEGMENT_LABEL_WIDTH = 24;
-const MIN_SEGMENT_HANDLE_WIDTH = 14;
+// 区間の色は作業名ごと（作業名一覧の順）。お手本と対象で同じ作業名は同じ色にし、帯でつなぐ。選択中・再生位置・要確認は、色ではなく枠・赤い線・上端の線で示す。
+const JOB_COLORS = [["#e3edf9", "#2f6fb0"], ["#dff1ee", "#1f7a6d"], ["#fbecd7", "#a3621a"], ["#e6f0dc", "#4a7a2f"], ["#f5e3e7", "#a33f55"], ["#ece6f5", "#6b4fa0"], ["#e8ebf0", "#56657a"], ["#f7efd9", "#8a6d1f"]];
+const NON_WORK_COLORS = ["#f0efeb", "#77716a"];
+const MIN_HANDLE_WIDTH = 14;
+// 時間バーの左右に空ける余白(px)。端の区間やつまみのフォーカス枠(はみ出し最大12px)が切れないようにする。
+const TB_PAD = 12;
 const TIMELINE_ZOOMS = [1, 2, 4, 8];
 const LOCAL_MOCK_STAGES = ["準備中（ローカル模擬処理）", "解析中（ローカル模擬処理）", "結果を整形中（ローカル模擬処理）"];
 const REAL_STAGES = ["準備中（テキストのみ）", "Geminiの同期応答を待機中", "結果を整形中"];
@@ -39,6 +45,13 @@ const state = {
   dirty: false,
   formDirty: false,
   timestamp: "",
+  align: "zero",
+  filter: "review",
+  listPins: null,
+  panel: "diff",
+  labels: [],
+  standardSegments: [],
+  detailMoreOpen: false,
 };
 
 const { timeToSeconds, secondsToTime, editWorsened } = Segments;
@@ -56,6 +69,22 @@ function maximumEnd() { return Math.max(1, state.videoDuration || 30); }
 function axisEnd(){return Math.max(maximumEnd(),state.standardDuration||0); }
 
 function validateSegments(segments) { return Segments.validateSegments(segments, maximumEnd()); }
+
+function asSeconds(list) { return list.map((segment) => ({ segment_id: segment.segment_id, start_s: timeToSeconds(segment.start_time) ?? 0, end_s: timeToSeconds(segment.end_time) ?? 0, job_no: segment.job_no, job_title: segment.job_title })); }
+function hasStandard() { return state.standardSegments.length > 0 && !$("#workspace").classList.contains("is-zero"); }
+function stableHash(value) { let hash = 0; for (const character of String(value)) hash = (hash * 31 + character.charCodeAt(0)) >>> 0; return hash; }
+function isNonWork(jobNo) { return state.labels.find((label) => label.job_no === jobNo)?.kind === "non_work"; }
+function jobColors(jobNo) {
+  if (isNonWork(jobNo)) return NON_WORK_COLORS;
+  const workLabels = state.labels.filter((label) => label.kind !== "non_work");
+  const known = workLabels.findIndex((label) => label.job_no === jobNo);
+  return JOB_COLORS[(known >= 0 ? known : stableHash(jobNo)) % 8];
+}
+function isEdited(segment) {
+  const original = state.prediction.find((item) => item.segment_id === segment.segment_id);
+  return !original || original.start_time !== segment.start_time || original.end_time !== segment.end_time || original.job_no !== segment.job_no;
+}
+function isFlagged(index) { return Boolean(state.warnings[index]?.length); }
 
 function formatBytes(bytes) {
   if (!Number.isFinite(bytes)) return "-";
@@ -127,48 +156,24 @@ function timelineTickLabel(seconds) {
   if (maximumEnd() >= 3600) return secondsToTime(seconds);
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
-function timelineStep(duration) {
-  const rough = duration / 6;
-  const steps = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 14400];
-  return steps.find((value) => value >= rough) || Math.ceil(rough / 3600) * 3600;
+const tb = { pps: 1, tMin: 0, tMax: 0, width: 0, offset: 0, alignment: { offset: 0, standard: null, missing: false } };
+let dragAxis = null;
+function layoutTimebar() {
+  const view = Math.max(200, $("#timelineScroll").clientWidth);
+  const segments = asSeconds(currentSegments());
+  const alignment = state.align === "job" && hasStandard() ? alignmentOffset(segments, state.selected, state.standardSegments) : { offset: 0, standard: null, missing: false };
+  const axis = timebarAxis({ alignment, withStandard: hasStandard(), maxEnd: maximumEnd(), standardDuration: state.standardDuration || 0, frozen: dragAxis });
+  tb.alignment = axis.alignment; tb.offset = axis.offset; tb.tMin = axis.tMin; tb.tMax = axis.tMax;
+  const scale = timebarScale({ view, zoom: state.timelineZoom, axisEnd: axisEnd(), tMin: tb.tMin, tMax: tb.tMax, pad: TB_PAD });
+  tb.pps = scale.pps; tb.width = scale.width;
+  $("#timelineTrack").style.width = `${tb.width}px`;
+  return segments;
 }
-function timelineMinorStep(majorStep) {
-  const steps = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600];
-  return steps.filter((value) => value < majorStep && majorStep % value === 0 && value <= majorStep / 3).at(-1) || null;
-}
-function renderRuler() {
-  const ruler = $("#timelineRuler"); const duration = axisEnd(); const step = timelineStep(duration); const minorStep = timelineMinorStep(step); const majorPoints = []; const minorPoints = [];
-  for (let second = 0; second < duration; second += step) majorPoints.push(second);
-  majorPoints.push(duration);
-  if (minorStep) {
-    for (let second = minorStep; second < duration; second += minorStep) {
-      if (second % step !== 0) minorPoints.push(second);
-    }
-  }
-  const minorTicks = minorPoints.map((second) => {
-    const tick = document.createElement("span");
-    tick.className = "ruler-tick minor";
-    tick.style.left = `${(second / duration) * 100}%`;
-    return tick;
-  });
-  const majorTicks = majorPoints.map((second, index) => {
-    const tick = document.createElement("span");
-    tick.className = `ruler-tick major${index === 0 ? " first" : ""}${index === majorPoints.length - 1 ? " last" : ""}`;
-    tick.style.left = `${(second / duration) * 100}%`;
-    tick.innerHTML = `<span class="ruler-label">${timelineTickLabel(second)}</span>`;
-    return tick;
-  });
-  ruler.replaceChildren(...minorTicks, ...majorTicks);
-}
-function sizeTimelineTrack() {
-  const scroll = $("#timelineScroll"); const width = Math.max(1, scroll.clientWidth) * state.timelineZoom;
-  $("#timelineTrack").style.width = `${width}px`;
-  return width;
-}
+function xOf(t) { return xAtSeconds({ t, tMin: tb.tMin, pps: tb.pps, pad: TB_PAD }); }
 function timelineSecondsAtClientX(clientX) {
   const rect = $("#timelineTrack").getBoundingClientRect();
   if (!rect.width) return 0;
-  return Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)) * axisEnd();
+  return secondsAtPointer({ x: clientX - rect.left, tMin: tb.tMin, pps: tb.pps, maxEnd: maximumEnd(), pad: TB_PAD });
 }
 function setTimelineScrollLeft(left) {
   const scroll = $("#timelineScroll"); const maximum = Math.max(0, scroll.scrollWidth - scroll.clientWidth);
@@ -177,15 +182,15 @@ function setTimelineScrollLeft(left) {
 function ensureTimelineTimeVisible(seconds, center = false) {
   const scroll = $("#timelineScroll"); const track = $("#timelineTrack");
   if (!scroll.clientWidth || !track.clientWidth) return;
-  const x = (Math.max(0, Math.min(axisEnd(), seconds)) / axisEnd()) * track.clientWidth;
+  const x = xOf(Math.max(0, Math.min(maximumEnd(), seconds)));
   const margin = Math.min(48, scroll.clientWidth * .12); const left = scroll.scrollLeft; const right = left + scroll.clientWidth;
   if (center || x < left + margin || x > right - margin) setTimelineScrollLeft(x - scroll.clientWidth / 2);
 }
 function ensureTimelineSegmentVisible(index) {
   const segment = currentSegments()[index]; const scroll = $("#timelineScroll"); const track = $("#timelineTrack");
   if (!segment || !scroll.clientWidth || !track.clientWidth) return;
-  const start = ((timeToSeconds(segment.start_time) ?? 0) / maximumEnd()) * track.clientWidth;
-  const end = ((timeToSeconds(segment.end_time) ?? 0) / maximumEnd()) * track.clientWidth;
+  const start = xOf(timeToSeconds(segment.start_time) ?? 0);
+  const end = xOf(timeToSeconds(segment.end_time) ?? 0);
   const margin = Math.min(48, scroll.clientWidth * .12); const left = scroll.scrollLeft; const right = left + scroll.clientWidth;
   if (start < left + margin || end > right - margin) {
     setTimelineScrollLeft(end - start > scroll.clientWidth - margin * 2 ? start - margin : (start + end) / 2 - scroll.clientWidth / 2);
@@ -193,10 +198,9 @@ function ensureTimelineSegmentVisible(index) {
 }
 function renderTimelineZoom() {
   const zoomIndex = TIMELINE_ZOOMS.indexOf(state.timelineZoom);
-  $("#timelineZoomValue").textContent = `${state.timelineZoom}x`;
+  $("#timelineZoomValue").textContent = `${state.timelineZoom * 100}%`;
   $("#timelineZoomOut").disabled = zoomIndex <= 0;
   $("#timelineZoomIn").disabled = zoomIndex >= TIMELINE_ZOOMS.length - 1;
-  $("#timeline").dataset.zoom = String(state.timelineZoom);
 }
 function setTimelineZoom(zoom) {
   if (!TIMELINE_ZOOMS.includes(zoom) || zoom === state.timelineZoom) return;
@@ -212,19 +216,138 @@ function selectSegment(index, seekVideo = true) {
   if (!currentSegments()[index]) return;
   state.selected = index; if (seekVideo) seek(timeToSeconds(currentSegments()[index].start_time)); render(); ensureTimelineSegmentVisible(index);
 }
-
+function renderRuler() {
+  const steps = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600];
+  const step = steps.find((value) => value * tb.pps >= 64) ?? steps.at(-1);
+  const ticks = [];
+  for (let t = Math.ceil(tb.tMin / step) * step; t <= tb.tMax + 1e-6; t += step) {
+    const tick = document.createElement("span"); tick.className = `ruler-tick${xOf(t) > tb.width - 40 ? " end" : ""}`; tick.style.left = `${xOf(t)}px`;
+    const label = document.createElement("span"); label.textContent = `${t < 0 ? "−" : ""}${timelineTickLabel(Math.abs(t))}`;
+    tick.append(label); ticks.push(tick);
+  }
+  $("#timelineRuler").replaceChildren(...ticks);
+}
+function signedSeconds(value) {
+  const rounded = Math.round(value * 10) / 10;
+  return `${rounded > 0 ? "+" : rounded < 0 ? "−" : "±"}${Number(Math.abs(rounded).toFixed(1))}`;
+}
+function renderStandardRow(targetSeconds) {
+  const container = $("#standardTimelineSegments");
+  if (!hasStandard()) { container.replaceChildren(); return; }
+  const pairedStd = state.align === "job" ? tb.alignment.standard : pairedStandard(targetSeconds, state.selected, state.standardSegments);
+  const blocks = state.standardSegments.map((segment) => {
+    const start = segment.start_s; const end = segment.end_s; const seconds = Math.round(end - start);
+    const button = document.createElement("button"); button.type = "button";
+    button.className = `standard-segment${isNonWork(segment.job_no) ? " non-work" : ""}${segment === pairedStd ? " paired" : ""}`;
+    button.style.left = `${xOf(start + tb.offset) + 1}px`; button.style.width = `${Math.max((end - start) * tb.pps - 2, 2)}px`;
+    const [tint, accent] = jobColors(segment.job_no);
+    button.style.setProperty("--job-tint", tint); button.style.setProperty("--job-accent", accent);
+    const label = `お手本 ${segment.job_no} ${segment.job_title}、${secondsToTime(start)}から${secondsToTime(end)}（${seconds}秒）`;
+    button.setAttribute("aria-label", label); button.title = label;
+    const title = document.createElement("span"); title.className = "block-title"; title.dataset.full = segment.job_title; title.dataset.short = segment.job_no;
+    const detail = document.createElement("span"); detail.className = "block-detail"; detail.dataset.full = `No.${segment.job_no} · ${seconds}秒`; detail.dataset.short = `${seconds}秒`;
+    button.append(title, detail);
+    button.addEventListener("click", (event) => { event.stopPropagation(); workflow.seekStandard(segment); });
+    return button;
+  });
+  container.replaceChildren(...blocks);
+}
+function renderTargetRow(targetSeconds) {
+  const container = $("#timelineSegments"); const reviewedView = state.view === "reviewed";
+  const blocks = targetSeconds.map((segment, index) => {
+    const start = segment.start_s; const end = segment.end_s; const seconds = Math.round(end - start);
+    const flagged = isFlagged(index); const selected = index === state.selected; const width = Math.max((end - start) * tb.pps - 2, 2);
+    const block = document.createElement("div");
+    block.className = `segment-block${selected ? " selected" : ""}${flagged ? " has-warning" : ""}${isNonWork(segment.job_no) ? " non-work" : ""}${reviewedView && isEdited(segment) ? " edited" : ""}`;
+    block.dataset.segmentIndex = index;
+    block.style.left = `${xOf(start) + 1}px`; block.style.width = `${width}px`;
+    const [tint, accent] = jobColors(segment.job_no);
+    block.style.setProperty("--job-tint", tint); block.style.setProperty("--job-accent", accent);
+    const bar = document.createElement("button"); bar.type = "button"; bar.className = "segment-bar";
+    bar.setAttribute("aria-pressed", String(selected));
+    bar.setAttribute("aria-label", `区間${String(index + 1).padStart(2, "0")}、${flagged ? "要確認、" : ""}${segment.job_title}、${secondsToTime(start)}から${secondsToTime(end)}、${seconds}秒。選択すると区間先頭へ移動します。`);
+    bar.title = `区間${String(index + 1).padStart(2, "0")}｜${segment.job_title}\n${secondsToTime(start)}–${secondsToTime(end)}（${seconds}秒）`;
+    const title = document.createElement("span"); title.className = "block-title"; title.dataset.full = segment.job_title; title.dataset.short = String(index + 1).padStart(2, "0");
+    const detail = document.createElement("span"); detail.className = "block-detail"; detail.dataset.full = `${String(index + 1).padStart(2, "0")} · ${seconds}秒${flagged ? " · 要確認" : ""}`; detail.dataset.short = `${seconds}秒`;
+    bar.append(title, detail);
+    bar.addEventListener("click", (event) => { event.stopPropagation(); selectSegment(index); });
+    block.append(bar);
+    if (reviewedView && selected && width >= MIN_HANDLE_WIDTH) {
+      for (const side of ["left", "right"]) {
+        const value = side === "left" ? start : end; const handle = document.createElement("span");
+        handle.className = `drag-handle ${side}`; handle.tabIndex = 0; handle.setAttribute("role", "slider");
+        handle.setAttribute("aria-label", `区間${String(index + 1).padStart(2, "0")}の${side === "left" ? "開始" : "終了"}時刻`);
+        handle.setAttribute("aria-valuemin", "0"); handle.setAttribute("aria-valuemax", String(maximumEnd())); handle.setAttribute("aria-valuenow", String(value)); handle.setAttribute("aria-valuetext", secondsToTime(value));
+        handle.addEventListener("pointerdown", (event) => beginHandleDrag(event, index, side));
+        handle.addEventListener("click", (event) => event.stopPropagation());
+        handle.addEventListener("keydown", (event) => nudgeHandle(event, index, side));
+        block.append(handle);
+      }
+    }
+    return block;
+  });
+  if (reviewedView) {
+    const shown = new Set(targetSeconds.flatMap((segment) => [Math.round(segment.start_s), Math.round(segment.end_s)]));
+    for (const segment of state.prediction) {
+      for (const t of [timeToSeconds(segment.start_time), timeToSeconds(segment.end_time)]) {
+        if (t == null || t <= 0 || t >= maximumEnd() || shown.has(t)) continue;
+        shown.add(t);
+        const mark = document.createElement("i"); mark.className = "orig-mark"; mark.style.left = `${xOf(t)}px`; mark.title = `自動判定の境目 ${secondsToTime(t)}`;
+        blocks.push(mark);
+      }
+    }
+  }
+  container.replaceChildren(...blocks);
+}
+function renderBands(targetSeconds) {
+  const svg = $("#timelineBands");
+  if (!hasStandard()) { svg.replaceChildren(); return; }
+  const height = svg.getBoundingClientRect().height || 34;
+  svg.setAttribute("width", String(tb.width)); svg.setAttribute("height", String(height)); svg.setAttribute("viewBox", `0 0 ${tb.width} ${height}`);
+  const selectedJob = targetSeconds[state.selected]?.job_no;
+  const paths = bandPairs(targetSeconds, state.standardSegments).map(({ target, standard }) => {
+    const x1 = xOf(standard.start_s + tb.offset) + 1; const x2 = xOf(standard.end_s + tb.offset) - 1;
+    const x3 = xOf(target.end_s) - 1; const x4 = xOf(target.start_s) + 1;
+    const [, accent] = jobColors(target.job_no); const on = target.job_no === selectedJob;
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", `M${x1} 0L${x2} 0L${x3} ${height}L${x4} ${height}Z`);
+    path.setAttribute("fill", accent); path.setAttribute("stroke", accent);
+    path.setAttribute("fill-opacity", on ? ".4" : ".14"); path.setAttribute("stroke-opacity", on ? ".85" : ".3");
+    return path;
+  });
+  svg.replaceChildren(...paths);
+}
+function fitBlockLabels() {
+  $("#timelineTrack").querySelectorAll(".block-title, .block-detail").forEach((span) => {
+    span.hidden = false; span.textContent = span.dataset.full;
+    if (span.scrollWidth > span.clientWidth + 1) span.textContent = span.dataset.short;
+    if (span.scrollWidth > span.clientWidth + 1) span.hidden = true;
+  });
+}
+function positionPlayheads() {
+  $("#playhead").style.left = `${xOf(state.currentTime)}px`;
+  const standardPlayhead = $("#standardPlayhead");
+  standardPlayhead.hidden = !hasStandard();
+  standardPlayhead.style.left = `${xOf(($("#standardPlayer").currentTime || 0) + tb.offset)}px`;
+}
+function renderTimebarChrome() {
+  document.querySelectorAll("[data-align]").forEach((button) => button.setAttribute("aria-checked", String(button.dataset.align === state.align)));
+  const note = $("#alignNote");
+  if (!hasStandard()) note.textContent = "";
+  else if (state.align !== "job") note.textContent = "両方の動画の0秒を左端にそろえています（実時間）。";
+  else if (tb.alignment.missing) note.textContent = "選んだ区間の作業はお手本にないため、0秒でそろえています。";
+  else note.textContent = `「${currentSegments()[state.selected]?.job_title}」の頭をそろえています（お手本を${signedSeconds(tb.offset)}秒ずらして表示。1秒あたりの幅は同じ）。`;
+  $("#targetRowLabel").textContent = state.view === "reviewed" ? "修正後" : "自動判定";
+  $("#rulerLabel").textContent = state.align === "job" && hasStandard() ? "対象の時間" : "時間";
+}
 function renderPlayback(followPlayhead = false) {
   $("#playbackTime").textContent = `${secondsToTime(state.currentTime)} / ${secondsToTime(maximumEnd())}`;
   const index = activeIndex(); const segment = currentSegments()[index];
   $("#activeSegmentLabel").textContent = segment ? `区間${String(index + 1).padStart(2, "0")} / ${segment.job_title}` : "該当する作業区間なし";
-  const playhead = $("#playhead"); const duration = axisEnd();
-  playhead.style.left = `${(state.currentTime / duration) * 100}%`;
-  playhead.dataset.time = secondsToTime(state.currentTime);
-  playhead.classList.toggle("at-start", state.currentTime <= .5);
-  playhead.classList.toggle("at-end", state.currentTime >= duration - .5);
-  $("#timeline").setAttribute("aria-valuemax", String(duration));
-  $("#timeline").setAttribute("aria-valuenow", String(Math.round(state.currentTime)));
-  $("#timeline").setAttribute("aria-valuetext", `${secondsToTime(state.currentTime)} / ${secondsToTime(duration)}`);
+  positionPlayheads();
+  $("#timelineRuler").setAttribute("aria-valuemax", String(maximumEnd()));
+  $("#timelineRuler").setAttribute("aria-valuenow", String(Math.round(state.currentTime)));
+  $("#timelineRuler").setAttribute("aria-valuetext", `${secondsToTime(state.currentTime)} / ${secondsToTime(maximumEnd())}`);
   document.querySelectorAll(".segment-block[data-segment-index]").forEach((block) => {
     block.classList.toggle("current", Number(block.dataset.segmentIndex) === index);
   });
@@ -240,47 +363,26 @@ function renderPlayback(followPlayhead = false) {
 }
 function keepRowVisible(list, row) {
   if (!list) return;
-  const bounds = list.getBoundingClientRect(); const rect = row.getBoundingClientRect();
-  if (rect.top < bounds.top) list.scrollTop += rect.top - bounds.top;
-  else if (rect.bottom > bounds.bottom) list.scrollTop += rect.bottom - bounds.bottom;
+  const rect = row.getBoundingClientRect(); const top = list.getBoundingClientRect().top + list.clientTop; const bottom = top + list.clientHeight;
+  const margin = 6;
+  if (rect.top < top) list.scrollTop += rect.top - top - margin;
+  else if (rect.bottom > bottom) list.scrollTop += rect.bottom - bottom + margin;
 }
 function renderTimeline() {
-  const segments = currentSegments(); const duration = axisEnd(); const container = $("#timelineSegments");
+  const container = $("#timelineSegments");
   const focused = container.contains(document.activeElement) ? document.activeElement : null; const focusedIndex = focused?.closest(".segment-block")?.dataset.segmentIndex;
   const focusedPart = focused?.classList.contains("drag-handle") ? `.drag-handle.${focused.classList.contains("left") ? "left" : "right"}` : ".segment-bar";
-  container.replaceChildren(); const trackWidth = sizeTimelineTrack();
+  const segments = layoutTimebar();
   renderRuler();
-  segments.forEach((segment, index) => {
-    const start = timeToSeconds(segment.start_time) ?? 0; const end = timeToSeconds(segment.end_time) ?? start; const width = ((end - start) / duration) * 100; const pixelWidth = (width / 100) * trackWidth;
-    const isShort = pixelWidth < MIN_SEGMENT_LABEL_WIDTH; const canDrag = pixelWidth >= MIN_SEGMENT_HANDLE_WIDTH; const hasWarning = Boolean(state.warnings[index]?.length);
-    const block = document.createElement("div");
-    block.className = `segment-block${index === state.selected ? " selected" : ""}${isShort ? " short" : ""}${hasWarning ? " has-warning" : ""}${start <= 0 ? " edge-start" : ""}${end >= duration ? " edge-end" : ""}${end / duration > .97 ? " callout-left" : ""}`;
-    block.dataset.segmentIndex = index; block.dataset.shortLabel = String(index + 1).padStart(2, "0");
-    block.dataset.pixelWidth = pixelWidth.toFixed(2);
-    block.style.left = `${(start / duration) * 100}%`; block.style.width = `${width}%`; block.style.setProperty("--segment-color", COLORS[index % COLORS.length]);
-    const bar = document.createElement("button"); bar.type = "button"; bar.className = "segment-bar";
-    bar.setAttribute("aria-pressed", String(index === state.selected));
-    bar.setAttribute("aria-label", `区間${String(index + 1).padStart(2, "0")}、${hasWarning ? "要確認、" : ""}${segment.job_title}、${segment.start_time}から${segment.end_time}、${end - start}秒。選択すると区間先頭へ移動します。`);
-    bar.title = `区間${String(index + 1).padStart(2, "0")}｜${segment.job_title}\n${segment.start_time}–${segment.end_time}（${end - start}秒）`;
-    bar.innerHTML = `<span class="segment-label">${String(index + 1).padStart(2, "0")}</span>`;
-    bar.addEventListener("click", (event) => { event.stopPropagation(); selectSegment(index); });
-    block.append(bar);
-    if (state.view === "reviewed" && index === state.selected && canDrag) {
-      for (const side of ["left", "right"]) {
-        const value = side === "left" ? start : end; const handle = document.createElement("span");
-        handle.className = `drag-handle ${side}`; handle.tabIndex = 0; handle.setAttribute("role", "slider");
-        handle.setAttribute("aria-label", `区間${String(index + 1).padStart(2, "0")}の${side === "left" ? "開始" : "終了"}時刻`);
-        handle.setAttribute("aria-valuemin", "0"); handle.setAttribute("aria-valuemax", String(duration)); handle.setAttribute("aria-valuenow", String(value)); handle.setAttribute("aria-valuetext", secondsToTime(value));
-        handle.addEventListener("pointerdown", (event) => beginHandleDrag(event, index, side));
-        handle.addEventListener("click", (event) => event.stopPropagation());
-        handle.addEventListener("keydown", (event) => nudgeHandle(event, index, side));
-        block.append(handle);
-      }
-    }
-    container.append(block);
-  });
+  renderStandardRow(segments);
+  renderTargetRow(segments);
+  renderBands(segments);
+  fitBlockLabels();
+  positionPlayheads();
+  renderTimebarChrome();
+  renderTimelineZoom();
   if (focusedIndex != null) container.querySelector(`.segment-block[data-segment-index="${focusedIndex}"] ${focusedPart}`)?.focus({ preventScroll: true });
-  renderTimelineZoom(); renderPlayback();
+  renderPlayback();
 }
 function applyBoundary(index, side, seconds) { return Segments.applyBoundary(state.reviewed, index, side, seconds, maximumEnd()); }
 function nudgeHandle(event, index, side) {
@@ -296,6 +398,7 @@ function nudgeHandle(event, index, side) {
 function beginHandleDrag(event, index, side) {
   if (!applyPendingDetail()) return;
   event.stopPropagation(); event.preventDefault(); const original = clone(state.reviewed); let wasClamped = false;
+  dragAxis = { alignment: tb.alignment, offset: tb.offset, tMin: tb.tMin, tMax: tb.tMax };
   const move = (pointerEvent) => {
     const seconds = Math.round(timelineSecondsAtClientX(pointerEvent.clientX));
     const key = side === "left" ? "start_time" : "end_time"; const previous = timeToSeconds(state.reviewed[index][key]); const next = applyBoundary(index, side, seconds); const isClamped = next !== seconds;
@@ -305,6 +408,7 @@ function beginHandleDrag(event, index, side) {
   };
   const up = () => {
     window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); window.removeEventListener("pointercancel", up);
+    dragAxis = null;
     const errors = validateSegments(state.reviewed);
     if (editWorsened(validateSegments(original), errors, index)) { state.reviewed = original; toast(errors[index][0]); }
     else if (JSON.stringify(original) !== JSON.stringify(state.reviewed)) { pushHistory(original); state.dirty = true; }
@@ -317,42 +421,72 @@ function escapeHtml(value) { return String(value).replace(/[&<>'"]/g, (character
 function renderList() {
   const list = $("#segmentList"); const active = activeIndex();
   const focusedIndex = list.contains(document.activeElement) ? document.activeElement.closest('.segment-row')?.dataset.segmentIndex : null;
+  const segments = currentSegments();
+  const flaggedCount = segments.filter((_, index) => isFlagged(index)).length;
+  if (state.filter === "review" && !flaggedCount) state.filter = "all";
+  document.querySelectorAll("[data-filter]").forEach((button) => button.setAttribute("aria-checked", String(button.dataset.filter === state.filter)));
+  $('[data-filter="review"]').textContent = `要確認だけ（${flaggedCount}）`;
+  $('[data-filter="all"]').textContent = `すべて（${segments.length}）`;
+  const { indexes, pins } = listRows({ segments, filter: state.filter, isFlagged, selected: state.selected, pins: state.listPins });
+  state.listPins = pins;
+  const rows = indexes.map((index) => ({ segment: segments[index], index }));
   list.replaceChildren();
-  currentSegments().forEach((segment, index) => {
-    const row = document.createElement("button"); row.type = "button"; row.className = `segment-row${index === state.selected ? " selected" : ""}${index === active ? " current" : ""}${state.warnings[index]?.length ? " warning" : ""}`;
+  rows.forEach(({ segment, index }) => {
+    const flagged = isFlagged(index); const edited = state.view === "reviewed" && isEdited(segment);
+    const row = document.createElement("button"); row.type = "button"; row.className = `segment-row${index === state.selected ? " selected" : ""}${index === active ? " current" : ""}${flagged ? " warning" : ""}`;
     row.dataset.segmentIndex = index; row.setAttribute("aria-pressed", String(index === state.selected));
     if (index === active) row.setAttribute("aria-current", "true");
     const duration = (timeToSeconds(segment.end_time) ?? 0) - (timeToSeconds(segment.start_time) ?? 0);
-    // 再生中の区間はバッジではなく行の薄い青の塗りで示す（renderPlaybackで追従）。
-    const stateTags = [
-      index === state.selected ? '<span class="selection-tag">選択中</span>' : "",
-      state.warnings[index]?.length ? '<span class="warning-mark">要確認</span>' : "",
-    ].join("");
-    row.innerHTML = `<span class="segment-number">${String(index + 1).padStart(2, "0")}</span><span class="row-copy"><strong>${escapeHtml(segment.job_title)}</strong><small>${escapeHtml(segment.start_time)}–${escapeHtml(segment.end_time)} ・ ${duration}秒 ・ Job ${escapeHtml(segment.job_no)}</small></span><span class="row-state">${stateTags}</span>`;
+    // 再生中の区間は行に付く「再生中」タグ（CSSの.segment-row.current .row-state::before）で示す。
+    const tags = `${flagged ? '<span class="tag review">要確認</span>' : ""}${edited ? '<span class="tag edited">修正あり</span>' : ""}`;
+    row.innerHTML = `<span class="segment-number">${String(index + 1).padStart(2, "0")}</span><span class="row-copy"><strong>${escapeHtml(segment.job_title)}</strong><small>${escapeHtml(segment.start_time)}–${escapeHtml(segment.end_time)} ・ ${duration}秒 ・ No.${escapeHtml(segment.job_no)}</small></span><span class="row-state">${tags}</span>`;
     row.addEventListener("click", () => selectSegment(index)); list.append(row);
   });
+  if (!rows.length) list.innerHTML = '<p class="empty-state">表示する区間はありません。</p>';
   const selectedRow = list.querySelector(".segment-row.selected");
   if (selectedRow) keepRowVisible(list, selectedRow);
   if (focusedIndex != null) list.querySelector(`[data-segment-index="${focusedIndex}"]`)?.focus({preventScroll:true});
 }
 function renderDetail() {
   if (state.formDirty) return;
-  const panel = $("#detailPanel"); const segment = currentSegments()[state.selected];
-  if (!segment) { panel.innerHTML = '<p class="empty-state">区間を選択してください。</p>'; return; }
+  const panel = $("#detailPanel"); const notes = $("#detailNotes"); const segment = currentSegments()[state.selected];
+  if (!segment) { panel.innerHTML = '<p class="empty-state">区間を選択してください。</p>'; notes.replaceChildren(); return; }
   const readOnly = state.view !== "reviewed";
-  panel.innerHTML = `<form id="detailForm"><div class="detail-heading"><div><small>${readOnly ? "自動判定（読み取り専用）" : "選択中の区間（編集できます）"}</small><strong>区間${String(state.selected + 1).padStart(2, "0")}｜${escapeHtml(segment.job_title)}</strong></div><span>${timeToSeconds(segment.end_time) - timeToSeconds(segment.start_time)}秒</span></div><div class="form-grid">
+  const duration = (timeToSeconds(segment.end_time) ?? 0) - (timeToSeconds(segment.start_time) ?? 0);
+  const referenceLines = [];
+  if (!readOnly) {
+    const original = state.prediction.find((item) => item.segment_id === segment.segment_id);
+    referenceLines.push(original
+      ? `自動判定：${escapeHtml(original.start_time)}–${escapeHtml(original.end_time)} ／ ${escapeHtml(original.job_no)} ${escapeHtml(original.job_title)}`
+      : "人が追加した区間です（自動判定にはありません）。");
+  }
+  if (hasStandard()) {
+    const targetSeconds = asSeconds(currentSegments());
+    const paired = pairedStandard(targetSeconds, state.selected, state.standardSegments) ?? state.standardSegments.find((item) => item.job_no === segment.job_no) ?? null;
+    referenceLines.push(paired
+      ? `お手本：${escapeHtml(secondsToTime(paired.start_s))}–${escapeHtml(secondsToTime(paired.end_s))} ／ ${escapeHtml(paired.job_no)} ${escapeHtml(paired.job_title)}`
+      : "お手本に対応する工程はありません。");
+  }
+  const warnings = state.warnings[state.selected] ?? [];
+  const heading = `区間${String(state.selected + 1).padStart(2, "0")}｜${escapeHtml(segment.job_title)}`;
+  // 一覧の上に出す編集欄は高さが変わらない部分だけにし、参照行・注意・詳細は一覧の下（#detailNotes）に置く。
+  // 詳細の入力欄はフォームの外にあるため form 属性で #detailForm に結び付ける。
+  panel.innerHTML = `<form id="detailForm"><div class="detail-heading"><div><small>${readOnly ? "自動判定（読み取り専用）" : "選択中の区間（修正後・編集できます）"}</small><strong title="${heading}">${heading}</strong></div><span>${duration}秒</span></div><div class="form-grid detail-grid">
     <label>開始時刻<input name="start_time" value="${escapeHtml(segment.start_time)}" pattern="\\d{2}:\\d{2}:\\d{2}" ${readOnly ? "disabled" : ""}></label>
     <label>終了時刻<input name="end_time" value="${escapeHtml(segment.end_time)}" pattern="\\d{2}:\\d{2}:\\d{2}" ${readOnly ? "disabled" : ""}></label>
-    <label>Job No.<input name="job_no" value="${escapeHtml(segment.job_no)}" ${readOnly ? "disabled" : ""}></label>
-    <label>作業標準書のページ<input name="page_number" value="${escapeHtml(segment.page_number)}" ${readOnly ? "disabled" : ""}></label>
-    <label class="wide">作業タイトル<input name="job_title" value="${escapeHtml(segment.job_title)}" ${readOnly ? "disabled" : ""}></label>
+    <label class="wide">作業名<input name="job_no" value="${readOnly ? `${escapeHtml(segment.job_no)} ${escapeHtml(segment.job_title)}` : escapeHtml(segment.job_no)}" ${readOnly ? "disabled" : ""}></label>
+  </div>${readOnly ? "" : '<div class="detail-actions"><button id="deleteButton" class="button secondary" type="button">区間を削除</button><button class="button primary" type="submit">この区間に反映</button></div>'}</form>`;
+  notes.innerHTML = `${referenceLines.map((line) => `<p class="detail-reference">${line}</p>`).join("")}${warnings.length ? `<ul class="warning-list">${warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join("")}</ul>` : ""}
+  <details class="detail-more"${state.detailMoreOpen ? " open" : ""}><summary>詳細（作業標準書のページ・作業タイトル・作業内容など）</summary><div class="form-grid detail-grid">
+    <label>作業標準書のページ<input form="detailForm" name="page_number" value="${escapeHtml(segment.page_number)}" ${readOnly ? "disabled" : ""}></label>
+    <label class="wide">作業タイトル<input form="detailForm" name="job_title" value="${escapeHtml(segment.job_title)}" ${readOnly ? "disabled" : ""}></label>
   </div><div class="readonly-grid">
-    <div class="readonly-field">作業時間<span>${timeToSeconds(segment.end_time) - timeToSeconds(segment.start_time)}秒${state.view === "prediction" && segment.duration_seconds !== timeToSeconds(segment.end_time) - timeToSeconds(segment.start_time) ? `（自動判定 ${segment.duration_seconds}秒）` : ""}</span></div>
+    <div class="readonly-field">作業時間<span>${duration}秒${state.view === "prediction" && segment.duration_seconds !== duration ? `（自動判定 ${segment.duration_seconds}秒）` : ""}</span></div>
     <div class="readonly-field">作業内容<span>${escapeHtml(segment.work_content)}</span></div>
     <div class="readonly-field">手の動き<span>${escapeHtml(segment.hand_movement)}</span></div>
     <div class="readonly-field">治工具・部品<span>${escapeHtml(segment.tools_and_parts)}</span></div>
-  </div>${state.warnings[state.selected]?.length ? `<ul class="warning-list">${state.warnings[state.selected].map((warning) => `<li>${escapeHtml(warning)}</li>`).join("")}</ul>` : ""}
-  ${readOnly ? "" : '<div class="detail-actions"><button id="deleteButton" class="button secondary" type="button">区間を削除</button><button class="button primary" type="submit">この区間に反映</button></div>'}</form>`;
+  </div></details>`;
+  $(".detail-more").addEventListener("toggle", (event) => { state.detailMoreOpen = event.target.open; });
   if (!readOnly) { $("#detailForm").addEventListener("submit", saveDetail); $("#deleteButton").addEventListener("click", deleteSegment); }
 }
 function saveDetail(event) {
@@ -369,12 +503,29 @@ function applyPendingDetail() {
   if (!form.reportValidity()) return false;
   return saveDetail({preventDefault(){},currentTarget:form});
 }
+const DETAIL_TIME_LABELS = { start_time: "開始時刻", end_time: "終了時刻" };
+// 保存の前に呼ぶ。入力中の区間を反映できなければ、区間タブを開いて直す時刻欄に焦点を入れ、理由の短い文を返す（反映できれば空文字）。
+function pendingDetailStop() {
+  if (!state.formDirty) return "";
+  const form = $("#detailForm");
+  // 隠れた欄には吹き出しも焦点も出せず、コンソールにエラーが出る。形式の誤りは、反映を試す前に区間タブへ移る。
+  if (form.checkValidity() && applyPendingDetail()) return "";
+  selectPanel("segments");
+  const index = state.selected;
+  const typed = { start_time: form.elements.start_time.value, end_time: form.elements.end_time.value };
+  const field = Segments.pendingTimeField(typed, state.reviewed[index]);
+  const before = validateSegments(state.reviewed)[index];
+  const draft = clone(state.reviewed); Object.assign(draft[index], typed);
+  const reason = validateSegments(draft)[index].find((message) => !before.includes(message)) ?? "";
+  form.elements[field].focus(); form.elements[field].select();
+  return `${DETAIL_TIME_LABELS[field]}を直してください。${reason}`;
+}
 async function deleteSegment() {
   if (!applyPendingDetail()) return;
   const segment = state.reviewed[state.selected]; if (!segment) return;
   const confirmed = await confirmAction({
     title: `区間${String(state.selected + 1).padStart(2, "0")}を削除しますか`,
-    message: `${segment.job_title}（${segment.start_time}–${segment.end_time}）を一覧とタイムラインから削除します。Undoで元に戻せます。`,
+    message: `${segment.job_title}（${segment.start_time}–${segment.end_time}）を一覧と時間バーから削除します。「元に戻す」で戻せます。`,
     acceptLabel: "削除する",
     danger: true,
   });
@@ -401,30 +552,44 @@ function redo() {
   if (!applyPendingDetail()) return; if (!state.redoStack.length) return; state.undoStack.push(clone(state.reviewed)); state.reviewed = state.redoStack.pop(); state.selected = Math.min(state.selected, state.reviewed.length - 1); state.dirty = true; state.warnings = validateSegments(state.reviewed); render(); }
 
 function download(type){return workflow.download(type);}
-function renderDirty() { const badge = $("#dirtyBadge"); badge.className = `dirty-badge ${state.dirty || state.formDirty ? "dirty" : "clean"}`; badge.textContent = state.formDirty ? "区間に未反映（保存時に検証・反映）" : state.dirty ? "履歴に未保存" : "変更なし"; }
+function unsaved() { return unsavedState({ dirty: state.dirty, formDirty: state.formDirty, memoText: $("#reviewComment").value, hasResult: Boolean(state.result) }); }
+function renderDirty() { const u = unsaved(), badge = $("#dirtyBadge"); badge.className = `dirty-badge ${u.badgeClass}`; if (badge.textContent !== u.badgeText) badge.textContent = u.badgeText; }
 function render() {
   workflow.warnings();
   const reviewedActive = state.view === "reviewed";
-  $("#reviewedTab").classList.toggle("active", reviewedActive); $("#predictionTab").classList.toggle("active", !reviewedActive);
-  $("#reviewedTab").setAttribute("aria-selected", String(reviewedActive)); $("#predictionTab").setAttribute("aria-selected", String(!reviewedActive));
-  $("#reviewedTab").tabIndex = reviewedActive ? 0 : -1; $("#predictionTab").tabIndex = reviewedActive ? -1 : 0;
+  $("#reviewedTab").setAttribute("aria-checked", String(reviewedActive)); $("#predictionTab").setAttribute("aria-checked", String(!reviewedActive));
   $("#addButton").disabled = state.view !== "reviewed";
   const undoCount = state.undoStack.length, redoCount = state.redoStack.length;
   $("#undoButton").disabled = !undoCount || state.view !== "reviewed"; $("#redoButton").disabled = !redoCount || state.view !== "reviewed";
-  $("#undoButton").textContent = undoCount ? `↶ Undo (${undoCount})` : "↶ Undo"; $("#redoButton").textContent = redoCount ? `↷ Redo (${redoCount})` : "↷ Redo";
+  $("#undoButton").textContent = undoCount ? `元に戻す（${undoCount}）` : "元に戻す"; $("#redoButton").textContent = redoCount ? `やり直す（${redoCount}）` : "やり直す";
+  const anyFlagged = currentSegments().some((_, index) => isFlagged(index));
+  $("#prevReview").disabled = !anyFlagged; $("#nextReview").disabled = !anyFlagged;
   renderTimeline(); renderList(); renderDetail(); renderDirty(); workflow.extras();
 }
-function switchView(view, focusTab = false) {
+function switchView(view) {
   if (!applyPendingDetail()) return;
   state.view = view; state.selected = Math.min(state.selected, currentSegments().length - 1);
+  state.listPins = null;
   state.warnings = view === "reviewed" ? validateSegments(state.reviewed) : clone(state.predictionWarnings);
   render();
-  if (focusTab) $(view === "reviewed" ? "#reviewedTab" : "#predictionTab").focus();
 }
-function handleTabKey(event) {
+function visiblePanelTabs() { return [...document.querySelectorAll(".panel-tab")].filter((tab) => !tab.hidden); }
+function selectPanel(name, focus = false) {
+  state.panel = name;
+  for (const tab of visiblePanelTabs()) {
+    const selected = tab.id === `tab-${name}`;
+    tab.setAttribute("aria-selected", String(selected)); tab.tabIndex = selected ? 0 : -1;
+  }
+  for (const body of document.querySelectorAll(".panel-body")) body.hidden = body.id !== `panel-${name}`;
+  if (focus) $(`#tab-${name}`)?.focus();
+}
+function handlePanelTabKey(event) {
   if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
   event.preventDefault();
-  switchView(event.key === "ArrowLeft" || event.key === "Home" ? "reviewed" : "prediction", true);
+  const tabs = visiblePanelTabs(); const names = tabs.map((tab) => tab.id.replace("tab-", ""));
+  const current = names.indexOf(state.panel);
+  const next = event.key === "Home" ? 0 : event.key === "End" ? names.length - 1 : (current + (event.key === "ArrowRight" ? 1 : -1) + names.length) % names.length;
+  selectPanel(names[next], true);
 }
 
 function bindDrop(zoneSelector, inputSelector, handler) {
@@ -433,7 +598,7 @@ function bindDrop(zoneSelector, inputSelector, handler) {
   for (const eventName of ["dragleave", "drop"]) zone.addEventListener(eventName, (event) => { event.preventDefault(); zone.classList.remove("dragover"); });
   zone.addEventListener("drop", (event) => handler(event.dataTransfer.files[0]));
 }
-const workflow=createWorkflow({state,$,render,setStatus,toast,renderDirty,seek,selectSegment,applyPendingDetail});
+const workflow=createWorkflow({state,$,render,setStatus,toast,renderDirty,hasUnsaved:()=>unsaved().any,seek,selectSegment,pendingDetailStop,selectPanel});
 function initialize(){return workflow.initialize();}
 
 bindDrop("#videoDrop", "#videoInput", selectVideo);
@@ -451,14 +616,28 @@ $("#timelineZoomIn").addEventListener("click", () => setTimelineZoom(TIMELINE_ZO
 $("#videoPlayer").addEventListener("timeupdate", (event) => { state.currentTime = event.currentTarget.currentTime; renderPlayback(true); });
 $("#reviewedTab").addEventListener("click", () => switchView("reviewed"));
 $("#predictionTab").addEventListener("click", () => switchView("prediction"));
-$("#reviewedTab").addEventListener("keydown", handleTabKey); $("#predictionTab").addEventListener("keydown", handleTabKey);
+bindRadioGroups();
+followVisualOrder({panel: $("#workspace > .result-panel"), timebar: $("#workspace > .timebar")});
 $("#addButton").addEventListener("click", openAddDialog); $("#confirmAdd").addEventListener("click", addSegment); $("#undoButton").addEventListener("click", undo); $("#redoButton").addEventListener("click", redo);
 $("#downloadPrediction").addEventListener("click", () => download("prediction")); $("#downloadReviewed").addEventListener("click", () => download("reviewed"));
+document.querySelectorAll(".panel-tab").forEach((tab) => { tab.addEventListener("click", () => selectPanel(tab.id.replace("tab-", ""))); tab.addEventListener("keydown", handlePanelTabKey); });
+document.querySelectorAll("[data-filter]").forEach((button) => button.addEventListener("click", () => { state.filter = button.dataset.filter; state.listPins = null; renderList(); }));
+function stepReview(direction) {
+  const flaggedIndexes = currentSegments().map((_, index) => index).filter((index) => isFlagged(index));
+  if (!flaggedIndexes.length) return;
+  const current = flaggedIndexes.indexOf(state.selected);
+  const next = current === -1 ? flaggedIndexes[0] : flaggedIndexes[(current + direction + flaggedIndexes.length) % flaggedIndexes.length];
+  selectSegment(next);
+}
+$("#prevReview").addEventListener("click", () => stepReview(-1)); $("#nextReview").addEventListener("click", () => stepReview(1));
+document.querySelectorAll("[data-align]").forEach((button) => button.addEventListener("click", () => { state.align = button.dataset.align; render(); ensureTimelineSegmentVisible(state.selected); }));
+$("#standardPlayer").addEventListener("timeupdate", positionPlayheads); $("#standardPlayer").addEventListener("seeked", positionPlayheads);
 let timelineResizeFrame = 0;
 window.addEventListener("resize", () => {
   cancelAnimationFrame(timelineResizeFrame);
   timelineResizeFrame = requestAnimationFrame(() => { if (!$("#workspace").hidden && currentSegments().length) { renderTimeline(); ensureTimelineTimeVisible(state.currentTime); } });
 });
-window.addEventListener("beforeunload", (event) => { if (state.dirty || state.formDirty) { event.preventDefault(); event.returnValue = ""; } });
-for (const eventName of ["input", "change"]) $("#detailPanel").addEventListener(eventName, () => { if(state.view === "reviewed") { state.formDirty = true; renderDirty(); } });
+window.addEventListener("beforeunload", (event) => { if (unsaved().any) { event.preventDefault(); event.returnValue = ""; } });
+$("#reviewComment").addEventListener("input", renderDirty);
+for (const target of [$("#detailPanel"), $("#detailNotes")]) for (const eventName of ["input", "change"]) target.addEventListener(eventName, () => { if(state.view === "reviewed") { state.formDirty = true; renderDirty(); } });
 initialize();
