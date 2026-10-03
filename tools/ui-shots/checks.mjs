@@ -102,6 +102,20 @@ export function inspectPage({ scope = ['body'], minFontPx = 12, minContrast = 4.
   const flagged = new Set(overflow.map((o) => o.el));
   overflow = overflow.filter((o) => ![...o.el.querySelectorAll('*')].some((d) => flagged.has(d))).map(({ el, ...rest }) => rest); // keep the innermost
 
+  // 2b. Boxes that cut off their own content: overflow hidden/clip on the block axis, content taller than the box by 1px or more.
+  // Deliberate clamps (-webkit-line-clamp) are skipped. Boxes that scroll (auto/scroll) are not cut off, they are reachable.
+  let clipped = [];
+  for (const el of elements) {
+    if (!(el instanceof HTMLElement) || el.matches('html,body')) continue;
+    const s = css(el);
+    if (!/^(hidden|clip)$/.test(s.overflowY) || s.display === 'inline' || s.display === 'contents' || s.webkitLineClamp !== 'none') continue;
+    if (el.scrollHeight < el.clientHeight + 1 || !shown(el)) continue;
+    clipped.push({ el, selector: describe(el), text: textOf(el), scroll_height: el.scrollHeight, client_height: el.clientHeight,
+      hidden_px: el.scrollHeight - el.clientHeight });
+  }
+  const cutBoxes = new Set(clipped.map((c) => c.el));
+  clipped = clipped.filter((c) => ![...c.el.querySelectorAll('*')].some((d) => cutBoxes.has(d))).map(({ el, ...rest }) => rest); // keep the innermost
+
   // 3 and 4. Font size and contrast of every visible piece of text.
   const FIELD = 'input:not([type=hidden],[type=checkbox],[type=radio],[type=range],[type=color],[type=file],[type=image]),textarea,select';
   const SKIP = new Set(['script', 'style', 'noscript', 'template', 'option', 'optgroup', 'title']);
@@ -163,7 +177,7 @@ export function inspectPage({ scope = ['body'], minFontPx = 12, minContrast = 4.
   return {
     title: document.title, scope,
     page,
-    overflow: cap(overflow), small_text: cap(smallText), contrast: cap(lowContrast), contrast_excluded: excluded,
-    counts: { hscroll: page.hscroll ? 1 : 0, overflow: overflow.length, small_text: smallText.length, contrast: lowContrast.length },
+    overflow: cap(overflow), clipped: cap(clipped), small_text: cap(smallText), contrast: cap(lowContrast), contrast_excluded: excluded,
+    counts: { hscroll: page.hscroll ? 1 : 0, overflow: overflow.length, clipped: clipped.length, small_text: smallText.length, contrast: lowContrast.length },
   };
 }

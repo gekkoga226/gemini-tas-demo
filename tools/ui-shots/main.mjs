@@ -13,7 +13,7 @@ const DEFAULT_CHROME = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 const DEFAULT_VIEWPORTS = '1920x950,1600,1280,1000,720,400';
 const REFUSED_PORT = '4173';
 const LIMITS = { minFontPx: 12, minContrast: 4.5 };
-const CHECKS = ['hscroll', 'overflow', 'small_text', 'contrast'];
+const CHECKS = ['hscroll', 'overflow', 'clipped', 'small_text', 'contrast'];
 
 const USAGE = `使い方: node tools/ui-shots/shoot.mjs [オプション]
   --base <URL>        接続先（既定 ${DEFAULT_BASE}。4173番とローカル以外は拒否）
@@ -272,7 +272,7 @@ async function capture(page, scenario, viewport, opts) {
 }
 
 function totals(screens) {
-  const t = { screens: screens.length, ok: 0, skipped: 0, error: 0, violations: 0, hscroll: 0, overflow: 0, small_text: 0, contrast: 0,
+  const t = { screens: screens.length, ok: 0, skipped: 0, error: 0, violations: 0, hscroll: 0, overflow: 0, clipped: 0, small_text: 0, contrast: 0,
     contrast_excluded: { image: 0, media: 0, disabled: 0 } };
   for (const s of screens) {
     t[s.status]++;
@@ -296,6 +296,7 @@ function hotspots(screens) {
   for (const s of screens.filter((x) => x.status === 'ok')) {
     for (const o of s.checks.page.offenders) add('横スクロール', o, s, `右端 ${o.right}px`);
     for (const o of s.checks.overflow) add('はみ出し', o, s, `${o.scroll_width}px > 枠 ${o.client_width}px${o.ellipsis ? '（…で省略）' : o.cut ? '（切れる）' : ''}`);
+    for (const o of s.checks.clipped) add('中身が切れる', o, s, `${o.scroll_height}px > 枠 ${o.client_height}px（${o.hidden_px}px 見えない）`);
     for (const o of s.checks.small_text) add('12px未満', o, s, `${o.font_px}px`);
     for (const o of s.checks.contrast) add('コントラスト', o, s, `${o.ratio}:1（文字 ${o.color} / 背景 ${o.background}）`);
   }
@@ -309,17 +310,17 @@ function summarize(report, out) {
     `ui-shots ${report.label}`,
     `接続先: ${report.base}（${report.server === 'mock' ? 'モック' : '静的ページ'}）  出力: ${out}`,
     `画面×幅: ${t.screens}件（撮影 ${t.ok}・省略 ${t.skipped}・エラー ${t.error}）`,
-    `違反の合計: ${t.violations}件（横スクロール ${t.hscroll}画面、はみ出し ${t.overflow}、12px未満 ${t.small_text}、コントラスト4.5:1未満 ${t.contrast}）`,
+    `違反の合計: ${t.violations}件（横スクロール ${t.hscroll}画面、はみ出し ${t.overflow}、中身が切れる ${t.clipped}、12px未満 ${t.small_text}、コントラスト4.5:1未満 ${t.contrast}）`,
     `コントラストの対象外: 画像・グラデーションの上 ${t.contrast_excluded.image}、動画・画像の上 ${t.contrast_excluded.media}、無効化された操作 ${t.contrast_excluded.disabled}`,
     '',
-    '画面ごと（横スクロール / はみ出し / 12px未満 / コントラスト、縦の長さ）:',
+    '画面ごと（横スクロール / はみ出し / 中身が切れる / 12px未満 / コントラスト、縦の長さ）:',
   ];
   for (const s of report.screens) {
     const head = `- ${s.scenario}${s.path ? ' ' + s.path : ''} ${s.viewport}`;
     if (s.status !== 'ok') { lines.push(`${head}: ${s.status === 'skipped' ? '省略' : 'エラー'}（${s.reason}）`); continue; }
     const v = s.violations;
     const p = s.checks.page;
-    lines.push(`${head}: ${v.hscroll ? 'あり' : 'なし'} / ${v.overflow} / ${v.small_text} / ${v.contrast}、縦 ${p.vscroll ? `${p.scroll_height}px（スクロールあり）` : '画面内に収まる'}`
+    lines.push(`${head}: ${v.hscroll ? 'あり' : 'なし'} / ${v.overflow} / ${v.clipped} / ${v.small_text} / ${v.contrast}、縦 ${p.vscroll ? `${p.scroll_height}px（スクロールあり）` : '画面内に収まる'}`
       + (s.blocked_requests.length ? `  ※遮断した通信 ${s.blocked_requests.length}件` : ''));
   }
   const top = hotspots(report.screens);

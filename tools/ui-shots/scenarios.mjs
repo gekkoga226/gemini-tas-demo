@@ -1,6 +1,6 @@
 // Screens to capture. Scenarios only open, wait and scroll: they never press start, save, register or delete.
 // `scope` limits the element-level checks to the part of the page that belongs to the screen.
-export const APP_SCENARIOS = ['b-new', 'b-history', 'b-library', 'b-library-set', 'b-result-zero', 'b-result-few', 'b-result-few-pending', 'a-workspace'];
+export const APP_SCENARIOS = ['b-new', 'b-history', 'b-library', 'b-library-set', 'b-result-zero', 'b-result-few', 'b-result-few-pending', 'b-result-few-memo', 'a-workspace'];
 
 const resultShown = "!document.querySelector('#workspace')?.hidden && document.querySelectorAll('#segmentList .segment-row').length > 0";
 
@@ -74,6 +74,14 @@ export const SCENARIOS = {
       await openResult(page, page.runs.few);
       await page.eval("document.querySelector('#firstPending')?.click()");
       await page.settle(900);
+    },
+  },
+  'b-result-few-memo': {
+    title: 'B 結果（お手本あり・メモタブ）', scope: ['#workspace'], needs: 'few', full: false,
+    async run(page) {
+      await openResult(page, page.runs.few);
+      await page.eval("document.querySelector('#tab-memo').click()");
+      await page.settle(600);
     },
   },
   'a-workspace': {
