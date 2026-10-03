@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { validateSegments, boundaryLimits, applyBoundary, editWorsened, nudgeResult } from "../public/segments.js";
+import { validateSegments, boundaryLimits, applyBoundary, editWorsened, nudgeResult, pendingTimeField } from "../public/segments.js";
 
 const DURATION = 1200;
 
@@ -94,4 +94,21 @@ test("applyBoundary keeps duration_seconds in step with the edited times", () =>
   applyBoundary(segments, 2, "right", 620, DURATION);
   assert.equal(segments[2].end_time, "00:10:20");
   assert.equal(segments[2].duration_seconds, 20);
+});
+
+// R12: a save that is stopped by the typed times must take the user to the field to repair.
+const SAVED_TIMES = { start_time: "00:00:12", end_time: "00:00:18" };
+
+test("pendingTimeField points at the time that is not in HH:MM:SS form, even when the other one was changed first", () => {
+  assert.equal(pendingTimeField({ start_time: "00:00:99", end_time: "00:00:18" }, SAVED_TIMES), "start_time");
+  assert.equal(pendingTimeField({ start_time: "00:00:05", end_time: "9" }, SAVED_TIMES), "end_time");
+  assert.equal(pendingTimeField({ start_time: "", end_time: "00:00:18" }, SAVED_TIMES), "start_time");
+  assert.equal(pendingTimeField({ start_time: "00:00:12", end_time: "abc" }, SAVED_TIMES), "end_time");
+});
+
+test("pendingTimeField falls back to the time that was changed, then to the start time", () => {
+  assert.equal(pendingTimeField({ start_time: "00:00:12", end_time: "00:00:01" }, SAVED_TIMES), "end_time");
+  assert.equal(pendingTimeField({ start_time: "00:00:06", end_time: "00:00:18" }, SAVED_TIMES), "start_time");
+  assert.equal(pendingTimeField({ start_time: "00:00:05", end_time: "00:00:30" }, SAVED_TIMES), "start_time");
+  assert.equal(pendingTimeField({ ...SAVED_TIMES }, SAVED_TIMES), "start_time");
 });

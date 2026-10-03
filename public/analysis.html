@@ -86,82 +86,125 @@
 
     <section class="card history-card" aria-labelledby="historyTitle"><div class="section-heading"><div><h2 id="historyTitle">実行履歴</h2></div><button id="refreshHistory" class="icon-button" type="button">更新</button></div><p class="hint">ブラウザを閉じてもサーバーが動いていれば処理は続きます。PC停止後はここから状態を確認してください。</p><div id="historyList" class="history-list"></div></section>
 
-    <section id="workspace" class="workspace" hidden aria-label="分析結果と区間の確認">
-      <div class="result-start card"><div><strong id="resultHeading">動画と区間を確認</strong><span id="mockResultBadge" class="mock-result-badge" hidden>合成モックの結果（動画は解析していません）</span><p id="reviewStartText">映像・時間軸・根拠を見ながら確認してください。</p></div><button id="firstPending" class="button primary" type="button">最初の要確認区間へ</button></div>
-      <section class="card media-card">
-        <div id="standardMediaSection"><div class="section-heading compact"><h2>お手本動画</h2><label><input id="syncPlayback" type="checkbox" checked>区間同期</label></div>
-        <label>比較するお手本<select id="standardSource"></select></label>
-        <p id="standardInferenceNotice" class="hint"></p>
-        <div class="video-shell"><video id="standardPlayer" controls preload="metadata"></video></div>
-        <p id="syncStatus" class="hint">同じJob No.の区間へ移動します。チェックを外すと独立再生できます。</p></div>
-        <div class="section-heading compact"><div class="heading-copy"><div><h2>対象動画</h2><p class="section-caption">映像の内容を確認します。時刻の移動と区間編集は下のタイムラインで行います。</p></div></div></div>
-        <div class="video-shell">
-          <video id="videoPlayer" controls preload="metadata"></video>
-          <div id="videoPlaceholder" class="video-placeholder">
-            <span>LOCAL MOCK</span>
-            <strong>結果の動画をここに表示します</strong>
-            <small>サンプルは合成動画で操作を確認できます</small>
-          </div>
+    <section id="workspace" class="workspace" hidden aria-labelledby="resultHeading">
+      <header class="card result-bar">
+        <div class="result-title">
+          <a class="back-link" href="#historyTitle">← 実行履歴</a>
+          <h2 id="resultHeading" tabindex="-1">分析結果</h2>
+          <span id="resultModeChip" class="chip chip-mode"></span>
+          <span id="resultSetChip" class="chip" hidden></span>
+          <span id="mockResultBadge" class="chip chip-mock" hidden>合成モックの結果（動画は解析していません）</span>
+        </div>
+        <div class="result-actions">
+          <span id="dirtyBadge" class="dirty-badge clean" aria-live="polite">変更なし</span>
+          <button id="firstPending" class="button secondary" type="button">最初の要確認区間へ</button>
+          <button id="saveReviewButton" class="button primary" type="button">保存</button>
+        </div>
+        <p id="resultIdentity" class="result-identity"></p>
+        <details id="mockResultWarning" class="notice warning mock-result-warning" hidden><summary>この結果は動画を解析していません（合成モック）。</summary><p>モックは動画の長さを均等に区切り、作業名一覧のラベルを順番に割り当てる動作確認用の固定パターンです。ラベルの正誤からモデル・プロンプトの精度は判断できません。実映像の判定は実接続モード（<code>start-app-real.bat</code>）で起動して行ってください。</p></details>
+      </header>
+
+      <section class="card result-videos" aria-label="お手本と対象の動画">
+        <div class="videos-head">
+          <label class="switch"><input id="syncPlayback" type="checkbox" checked>区間同期</label>
+          <p id="syncStatus" class="sync-status" aria-live="polite">同じ作業名の区間へ移動します。独立再生も選べます。</p>
+        </div>
+        <div class="players">
+          <section id="standardMediaSection" class="player" aria-labelledby="standardKind">
+            <header class="player-head"><span id="standardKind" class="player-kind standard">お手本</span><label class="source-pick"><span>比較するお手本</span><select id="standardSource"></select></label></header>
+            <div class="video-shell"><video id="standardPlayer" controls preload="metadata"></video></div>
+            <p id="standardInferenceNotice" class="hint"></p>
+          </section>
+          <section class="player" aria-labelledby="targetKind">
+            <header class="player-head"><span id="targetKind" class="player-kind target">対象</span><span id="targetName" class="player-name"></span></header>
+            <div class="video-shell">
+              <video id="videoPlayer" controls preload="metadata"></video>
+              <div id="videoPlaceholder" class="video-placeholder"><strong>結果の動画をここに表示します</strong><small>サンプルは合成動画で操作を確認できます</small></div>
+            </div>
+            <p class="playback-meta"><span>現在時刻 <strong id="playbackTime">00:00:00 / 00:00:30</strong></span><span>現在位置の作業 <strong id="activeSegmentLabel">該当する作業区間なし</strong></span></p>
+          </section>
         </div>
       </section>
 
-      <section class="card timeline-card" aria-labelledby="timelineTitle">
-        <div class="section-heading compact timeline-heading"><div><h2 id="timelineTitle">作業タイムライン</h2><p class="section-caption">現在位置と作業区間を同じ時間軸で確認し、必要な範囲を拡大して編集します。</p></div></div>
-         <div id="resultIdentity" class="notice neutral"></div><div id="mockResultWarning" class="notice warning mock-result-warning" role="note" hidden><strong>この結果は動画を解析していません（合成モック）。</strong>モックは動画の長さを均等に区切り、作業名一覧のラベルを順番に割り当てる動作確認用の固定パターンです。ラベルの正誤からモデル・プロンプトの精度は判断できません。実映像の判定は実接続モード（<code>start-app-real.bat</code>）で起動して行ってください。</div><p id="globalWarnings" class="warning-list"></p>
-         <p id="selectedComparison" class="selected-comparison" role="status"></p>
-        <div class="playback-meta">
-          <div class="time-readout"><small>現在時刻 / 全体</small><strong id="playbackTime">00:00:00 / 00:00:30</strong></div>
-          <div class="active-readout"><span class="current-dot" aria-hidden="true"></span><div><small>現在位置の作業</small><strong id="activeSegmentLabel">該当する作業区間なし</strong></div></div>
+      <aside class="card result-panel" aria-label="確認パネル">
+        <div class="panel-tabs" role="tablist" aria-label="確認の種類">
+          <button id="tab-diff" class="panel-tab" type="button" role="tab" aria-controls="panel-diff" aria-selected="true">時間差</button>
+          <button id="tab-segments" class="panel-tab" type="button" role="tab" aria-controls="panel-segments" aria-selected="false" tabindex="-1">区間<span id="reviewCount" class="count"></span></button>
+          <button id="tab-memo" class="panel-tab" type="button" role="tab" aria-controls="panel-memo" aria-selected="false" tabindex="-1">メモ<span id="memoCount" class="count"></span></button>
         </div>
-        <div id="timeline" class="timeline" role="slider" tabindex="0" aria-label="動画の現在位置" aria-describedby="timelineHint" aria-valuemin="0" aria-valuemax="30" aria-valuenow="0" aria-valuetext="00:00:00 / 00:00:30">
-          <div id="timelineScroll" class="timeline-scroll">
-            <div id="timelineTrack" class="timeline-track">
-              <div id="timelineRuler" class="timeline-ruler" aria-hidden="true"></div>
-              <div id="standardTimelineSegments" aria-label="お手本の区間"></div>
-              <div id="timelineSegments"></div>
-              <div id="playhead" class="playhead" data-time="00:00:00"><span aria-hidden="true"></span></div>
+        <div id="panel-diff" class="panel-body" role="tabpanel" aria-labelledby="tab-diff">
+          <div class="segmented" role="radiogroup" aria-label="時間差の元データ"><button type="button" role="radio" data-diff-source="auto" aria-checked="true">自動判定</button><button type="button" role="radio" data-diff-source="reviewed" aria-checked="false">修正後</button></div>
+          <p id="diffSourceLabel" class="source-label" aria-live="polite"></p>
+          <p id="diffContext" class="diff-context"></p>
+          <div id="diffTable" class="diff-table" role="table" aria-label="工程ごとの時間差"></div>
+          <p class="hint">行を選ぶと、両方の動画がその工程の区間へ移動します。ST（作業標準書の時間）は余裕時間を含む目安です。</p>
+        </div>
+        <div id="panel-segments" class="panel-body" role="tabpanel" aria-labelledby="tab-segments" hidden>
+          <p id="globalWarnings" class="warning-list"></p>
+          <div id="detailPanel" class="detail-panel"><p class="empty-state">区間を選択してください。</p></div>
+          <div class="list-tools">
+            <div class="segmented" role="radiogroup" aria-label="表示する結果"><button id="reviewedTab" type="button" role="radio" aria-checked="true">修正後</button><button id="predictionTab" type="button" role="radio" aria-checked="false">自動判定</button></div>
+            <div class="segmented" role="radiogroup" aria-label="一覧に出す区間"><button type="button" role="radio" data-filter="review" aria-checked="true">要確認だけ</button><button type="button" role="radio" data-filter="all" aria-checked="false">すべて</button></div>
+          </div>
+          <div class="editor-tools">
+            <button id="prevReview" class="icon-button" type="button">前の要確認</button>
+            <button id="nextReview" class="icon-button" type="button">次の要確認</button>
+            <button id="addButton" class="icon-button" type="button">＋ 区間を追加</button>
+            <button id="undoButton" class="icon-button" type="button" disabled>元に戻す</button>
+            <button id="redoButton" class="icon-button" type="button" disabled>やり直す</button>
+          </div>
+          <div id="segmentList" class="segment-list" role="group" aria-label="対象動画の区間"></div>
+          <div id="detailNotes" class="detail-notes"></div>
+          <details id="evidenceDisclosure" class="evidence-disclosure"><summary>根拠を見る（確信度・候補・参照された映像）</summary><div id="evidencePanel" class="evidence-panel"></div></details>
+        </div>
+        <div id="panel-memo" class="panel-body" role="tabpanel" aria-labelledby="tab-memo" hidden>
+          <p class="hint">保存するたびに、メモを1件ずつ残します（区間ごとではありません）。保存は上の「保存」から行います。</p>
+          <label>確認者<input id="reviewEditor" value="ローカル確認者"></label>
+          <label>メモ（任意・次の保存に付きます）<textarea id="reviewComment" rows="3" maxlength="1000" placeholder="例：部品待ちの区間を確認し、終わりを部品が届いた時点に合わせた。"></textarea></label>
+          <h3 class="subhead">これまでの保存</h3>
+          <p id="reviewHistory" class="hint"></p><ol id="reviewHistoryList" class="review-history-list"></ol>
+          <h3 class="subhead">ファイルに書き出す</h3>
+          <div class="download-grid"><button id="downloadPrediction" class="button secondary" type="button">自動判定JSON</button><button id="downloadReviewed" class="button secondary" type="button">修正後JSON（保存して書き出す）</button></div>
+          <p class="hint">修正後JSONにも自動判定の全体を original_result として同梱します（方式・入力ハッシュ・版・共有元・候補と根拠・モック表示）。修正後の区間は segments、確認者・日時・メモ（comment）・変更内容も保存します。候補と根拠は自動判定の記録です。自動判定は上書きしません。</p>
+        </div>
+      </aside>
+
+      <section class="card timebar" aria-labelledby="timelineTitle">
+        <div class="tb-toolbar">
+          <h2 id="timelineTitle">時間バー</h2>
+          <div id="alignChoice" class="segmented" role="radiogroup" aria-label="並べ方"><button type="button" role="radio" data-align="zero" aria-checked="true">0秒をそろえる</button><button type="button" role="radio" data-align="job" aria-checked="false">選んだ工程で頭をそろえる</button></div>
+          <span id="alignNote" class="align-note"></span>
+          <div class="timeline-zoom" role="group" aria-label="時間バーの表示倍率">
+            <button id="timelineZoomOut" class="icon-button zoom-button" type="button" aria-label="時間バーを縮小" disabled>−</button>
+            <output id="timelineZoomValue" aria-live="polite">100%</output>
+            <button id="timelineZoomIn" class="icon-button zoom-button" type="button" aria-label="時間バーを拡大">＋</button>
+          </div>
+          <ul class="timeline-legend" aria-label="時間バーの凡例"><li><i class="legend-mark current"></i>再生位置</li><li><i class="legend-mark selected"></i>選択中</li><li class="legend-pair"><i class="legend-mark pair"></i>対のお手本</li><li><i class="legend-mark warning"></i>要確認</li><li class="legend-band"><i class="legend-mark band"></i>同じ作業名</li><li><i class="legend-mark orig"></i>自動判定の境目</li><li><i class="legend-mark nonwork"></i>作業外</li></ul>
+        </div>
+        <div class="tb-body">
+          <div class="tb-labels" aria-hidden="true">
+            <div class="lb-ruler" id="rulerLabel">時間</div>
+            <div class="lb-row lb-standard"><strong>お手本</strong><span id="standardRowLabel"></span></div>
+            <div class="lb-band"></div>
+            <div class="lb-row lb-target"><strong>対象</strong><span id="targetRowLabel">修正後</span></div>
+          </div>
+          <div id="timeline" class="timeline" tabindex="-1">
+            <div id="timelineScroll" class="timeline-scroll">
+              <div id="timelineTrack" class="timeline-track">
+                <div id="timelineRuler" class="timeline-ruler" role="slider" tabindex="0" aria-label="対象動画の再生位置" aria-describedby="timelineHint" aria-valuemin="0" aria-valuemax="30" aria-valuenow="0" aria-valuetext="00:00:00 / 00:00:30"></div>
+                <div id="standardTimelineSegments" class="tb-row tb-standard" aria-label="お手本の区間"></div>
+                <svg id="timelineBands" class="tb-bands" aria-hidden="true"></svg>
+                <div id="timelineSegments" class="tb-row tb-target" aria-label="対象の区間"></div>
+                <div id="standardPlayhead" class="playhead standard-playhead" aria-hidden="true"></div>
+                <div id="playhead" class="playhead target-playhead" aria-hidden="true"></div>
+              </div>
             </div>
           </div>
         </div>
-        <div class="timeline-footer">
-          <p id="timelineHint" class="hint timeline-hint"><span><kbd>クリック</kbd> 現在位置を移動</span><span><kbd>← →</kbd> 1秒移動</span><span><kbd>両端</kbd> 選択区間の時刻を調整（短い区間は拡大）</span><span class="timeline-legend" aria-label="タイムラインの凡例"><span><i class="legend-mark selected" aria-hidden="true"></i>選択中</span><span><i class="legend-mark current" aria-hidden="true"></i>現在位置</span><span><i class="legend-mark warning" aria-hidden="true"></i>要確認</span></span></p>
-          <div class="timeline-zoom" role="group" aria-label="タイムラインの表示倍率">
-            <span class="timeline-zoom-label">表示倍率</span>
-            <button id="timelineZoomOut" class="timeline-zoom-button" type="button" aria-label="タイムラインを縮小" disabled>−</button>
-            <output id="timelineZoomValue" aria-live="polite">1x</output>
-            <button id="timelineZoomIn" class="timeline-zoom-button" type="button" aria-label="タイムラインを拡大">＋</button>
-          </div>
-        </div>
+        <p id="timelineHint" class="hint timeline-hint">区間を選ぶと動画がその区間へ移動します。選んだ対象の区間の両端（縦の取っ手）をドラッグするか、取っ手を選んで <kbd>←</kbd><kbd>→</kbd> キーで動かすと、修正後の開始・終了を直せます（自動判定は変わりません）。時間バーの目盛り（上の時間の行）を選んで <kbd>←</kbd><kbd>→</kbd> キーを押すと、対象の再生位置が1秒ずつ動きます。</p>
+        <p class="hint timeline-hint repeat-note">同じ作業が繰り返すとき、帯は回数どうしで結び、区間の移動は今の位置以降の最初の同じ作業へ移ります。</p>
       </section>
-
-      <section class="card editor-card">
-        <div class="section-heading compact"><div class="heading-copy"><div><h2>作業ラベルを確認・修正</h2><p class="section-caption">一覧で選ぶと動画が区間先頭へ移動します。時刻と作業名は下で編集できます。</p></div></div></div>
-        <div class="view-tabs" role="tablist">
-          <button id="reviewedTab" class="tab active" type="button" role="tab" aria-selected="true">修正後</button>
-          <button id="predictionTab" class="tab" type="button" role="tab" aria-selected="false">自動判定</button>
-        </div>
-        <div class="editor-tools">
-          <button id="addButton" class="icon-button" type="button">＋ 区間追加</button>
-          <button id="undoButton" class="icon-button" type="button" disabled>↶ Undo</button>
-          <button id="redoButton" class="icon-button" type="button" disabled>↷ Redo</button>
-        </div>
-        <div id="evidencePanel" class="evidence-panel"></div>
-        <div id="segmentList" class="segment-list"></div>
-        <div id="detailPanel" class="detail-panel">
-          <p class="empty-state">区間を選択してください。</p>
-        </div>
-      </section>
-
-      <section class="card output-card">
-        <div class="section-heading compact"><div class="heading-copy"><div><h2>確認結果を保存</h2><p class="section-caption">自動判定と修正後の結果を分けて保存します。</p></div></div><span id="dirtyBadge" class="dirty-badge clean">変更なし</span></div>
-        <div class="download-grid">
-          <button id="downloadPrediction" class="button secondary" type="button">自動判定JSON</button>
-          <button id="downloadReviewed" class="button primary" type="button">修正後JSONを保存</button>
-        </div>
-        <label>確認者<input id="reviewEditor" value="ローカル確認者"></label><label>メモ（任意・保存1回ごと）<textarea id="reviewComment" rows="2" maxlength="1000" placeholder="例：部品待ちの区間を確認し、終わりを部品が届いた時点に合わせた。"></textarea></label><button id="saveReviewButton" class="button secondary" type="button">修正を履歴に保存</button>
-        <p id="reviewHistory" class="hint"></p><ol id="reviewHistoryList" class="review-history-list"></ol><p class="hint">修正後JSONにも自動判定の全体を original_result として同梱します（方式・入力ハッシュ・版・共有元・候補と根拠・モック表示）。修正後の区間は segments、確認者・日時・メモ（comment）・変更内容も保存します。候補と根拠は自動判定の記録です。自動判定は上書きしません。</p>
-      </section>
-      <details id="resultAnalyticsDisclosure" class="card result-analytics"><summary>時間内訳と集計を見る</summary><section id="resultAnalytics"></section></details>
+      <details id="resultAnalyticsDisclosure" class="card result-analytics"><summary>お手本の時間の集計を見る（山積み表・分布）</summary><section id="resultAnalytics"></section></details>
     </section>
   </main>
 
@@ -173,7 +216,7 @@
       <div class="form-grid">
         <label>開始時刻<input name="start_time" required pattern="\d{2}:\d{2}:\d{2}"></label>
         <label>終了時刻<input name="end_time" required pattern="\d{2}:\d{2}:\d{2}"></label>
-        <label>Job No.<input name="job_no"></label>
+        <label>作業名<input name="job_no"></label>
         <label>作業標準書のページ<input name="page_number"></label>
         <label class="wide">作業タイトル<input name="job_title"></label>
       </div>
