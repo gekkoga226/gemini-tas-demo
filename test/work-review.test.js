@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import { once } from 'node:events';
-import '../public/work-core.js';
+import '../test-support/legacy-review/work-core.js';
 import { createAppServer } from '../server.js';
 import { fixture, waitRun } from '../test-support/fixture.js';
 import { defaultSettings } from '../src/settings.js';
@@ -80,7 +80,7 @@ test('video binding checks identity, records a small final-boundary adjustment, 
 });
 
 test('one-mode input leaves the missing mode empty and does not invent takt time', async () => {
-  const result = JSON.parse(await fs.readFile(new URL('../public/examples/work-result.json', import.meta.url), 'utf8'));
+  const result = JSON.parse(await fs.readFile(new URL('../test-support/legacy-review/work-result.json', import.meta.url), 'utf8'));
   delete result.modes.few; delete result.tt_sec;
   const validated = C.validate(result);
   assert.equal(validated.tt_sec, null);
@@ -126,7 +126,13 @@ test('stored pipeline result opens in the new contract without mutating inferenc
   const home = await fetch(base + '/', { redirect: 'manual' });
   assert.equal(home.status, 302);
   assert.equal(home.headers.get('location'), '/analysis.html?new=1');
-  for (const url of ['/review.html', '/analysis.html', '/work-styles.css', '/work-core.js', '/work-app.js']) {
+  const retired = await fetch(base + '/review.html', { redirect: 'manual' });
+  assert.equal(retired.status, 302);
+  assert.equal(retired.headers.get('location'), '/analysis.html?new=1');
+  for (const url of ['/index.html', '/work-styles.css', '/work-core.js', '/work-app.js', '/examples/work-result.json']) {
+    assert.equal((await fetch(base + url)).status, 404);
+  }
+  for (const url of ['/analysis.html', '/st-comparison.js', '/st-view.js']) {
     const page = await fetch(base + url); assert.equal(page.status, 200);
     assert.ok(page.headers.get('content-security-policy').includes("script-src 'self'"));
     assert.ok(!page.headers.get('content-security-policy').includes('unsafe-inline'));

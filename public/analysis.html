@@ -10,11 +10,11 @@
 </head>
 <body>
   <a class="analysis-skip" href="#inputTitle">分析の入力へ</a>
-  <nav class="work-return" aria-label="ワークスペース"><a class="analysis-brand" href="/"><img src="/work-mark.svg" alt="" width="24" height="24">作業みえる</a><a href="#inputTitle">新しい分析</a><button id="openLibrary" type="button">お手本ライブラリ</button><a href="#historyTitle">実行履歴</a><a href="/review.html">作業レビュー</a></nav>
+  <nav class="work-return" aria-label="ワークスペース"><a class="analysis-brand" href="/"><img src="/work-mark.svg" alt="" width="24" height="24">作業みえる</a><a href="#inputTitle" data-place="new">新しい分析</a><button id="openLibrary" type="button">お手本ライブラリ</button><a href="#historyTitle" data-place="history">実行履歴</a><button id="openUsage" type="button">使い方</button></nav>
   <header class="app-header">
     <div class="brand-lockup">
       <div>
-        <h1>新しい分析</h1>
+        <h1>作業の分析</h1>
         <p class="subtitle">動画を選んで、作業の時間と違いを確かめましょう。</p>
       </div>
     </div>
@@ -84,12 +84,12 @@
       <details><summary>作業標準書PDFから作業名一覧を抽出</summary><p class="hint">作業標準書から一度抽出し、作業名一覧と識別条件を人が修正・確認してから登録します。モックの抽出内容は合成例です。</p><label>作業標準書PDF<input id="vocabularyPdf" type="file" accept="application/pdf,.pdf"></label><p id="pdfDestination" class="notice neutral"></p><label class="consent"><input id="pdfConsent" type="checkbox">この作業標準書の送信範囲を確認しました</label><button id="extractVocabulary" type="button" class="button secondary">作業名一覧を抽出</button><div id="vocabularyDraft" hidden><label>語彙（vocabulary.v1）<textarea id="draftVocabulary" rows="14"></textarea></label><label>識別条件（discriminators.v1）<textarea id="draftDiscriminators" rows="14"></textarea></label><button id="approveVocabulary" type="button" class="button secondary">修正内容を確認して作業名一覧を登録</button></div></details>
     </section>
 
-    <section class="card history-card" aria-labelledby="historyTitle"><div class="section-heading"><div><h2 id="historyTitle">実行履歴</h2></div><button id="refreshHistory" class="icon-button" type="button">更新</button></div><p class="hint">ブラウザを閉じてもサーバーが動いていれば処理は続きます。PC停止後はここから状態を確認してください。</p><div id="historyList" class="history-list"></div></section>
+    <section class="card history-card" aria-labelledby="historyTitle"><div class="section-heading"><div><h2 id="historyTitle" tabindex="-1">実行履歴</h2></div><button id="refreshHistory" class="icon-button" type="button">更新</button></div><p class="hint">ブラウザを閉じてもサーバーが動いていれば処理は続きます。PC停止後はここから状態を確認してください。</p><div id="historyList" class="history-list"></div></section>
 
     <section id="workspace" class="workspace" hidden aria-labelledby="resultHeading">
       <header class="card result-bar">
         <div class="result-title">
-          <a class="back-link" href="#historyTitle">← 実行履歴</a>
+          <a class="back-link" href="#historyTitle" data-place="history">← 実行履歴</a>
           <h2 id="resultHeading" tabindex="-1">分析結果</h2>
           <span id="resultModeChip" class="chip chip-mode"></span>
           <span id="resultSetChip" class="chip" hidden></span>
@@ -129,6 +129,7 @@
       <aside class="card result-panel" aria-label="確認パネル">
         <div class="panel-tabs" role="tablist" aria-label="確認の種類">
           <button id="tab-diff" class="panel-tab" type="button" role="tab" aria-controls="panel-diff" aria-selected="true">時間差</button>
+          <button id="tab-st" class="panel-tab" type="button" role="tab" aria-controls="panel-st" aria-selected="false" tabindex="-1" hidden>STとの比較</button>
           <button id="tab-segments" class="panel-tab" type="button" role="tab" aria-controls="panel-segments" aria-selected="false" tabindex="-1">区間<span id="reviewCount" class="count"></span></button>
           <button id="tab-memo" class="panel-tab" type="button" role="tab" aria-controls="panel-memo" aria-selected="false" tabindex="-1">メモ<span id="memoCount" class="count"></span></button>
         </div>
@@ -138,6 +139,16 @@
           <p id="diffContext" class="diff-context"></p>
           <div id="diffTable" class="diff-table" role="table" aria-label="工程ごとの時間差"></div>
           <p class="hint">行を選ぶと、両方の動画がその工程の区間へ移動します。ST（作業標準書の時間）は余裕時間を含む目安です。</p>
+        </div>
+        <div id="panel-st" class="panel-body" role="tabpanel" aria-labelledby="tab-st" hidden>
+          <div class="segmented" role="radiogroup" aria-label="ST比較の元データ"><button type="button" role="radio" data-st-source="auto" aria-checked="true">自動判定</button><button type="button" role="radio" data-st-source="reviewed" aria-checked="false">修正後</button></div>
+          <p id="stSourceLabel" class="source-label" aria-live="polite"></p>
+          <div class="segmented st-mode" role="radiogroup" aria-label="繰り返しの比べ方"><button type="button" role="radio" data-st-mode="average" aria-checked="true">平均</button><button type="button" role="radio" data-st-mode="total" aria-checked="false">合計</button><button type="button" role="radio" data-st-mode="occurrence" aria-checked="false">1回ごと</button></div>
+          <p class="hint">差は対象−STです。1回は同じ作業名の1区間で、サイクル数ではありません。修正後の集計は区間への反映後に変わります。</p>
+          <div id="stTable" class="st-table" role="group" aria-label="作業ごとのST比較"></div>
+          <p id="stSummary" class="st-summary"></p>
+          <details id="stMissing" class="st-missing" hidden><summary>この動画に出てこない作業</summary><ul></ul></details>
+          <p class="hint">行を選ぶと、表示中の元データの区間へ動画・時間バーが移動します。ST（作業標準書の時間）は余裕時間を含む目安です。差から良し悪しや原因は判定しません。</p>
         </div>
         <div id="panel-segments" class="panel-body" role="tabpanel" aria-labelledby="tab-segments" hidden>
           <p id="globalWarnings" class="warning-list"></p>
@@ -204,6 +215,7 @@
         <p id="timelineHint" class="hint timeline-hint">区間を選ぶと動画がその区間へ移動します。選んだ対象の区間の両端（縦の取っ手）をドラッグするか、取っ手を選んで <kbd>←</kbd><kbd>→</kbd> キーで動かすと、修正後の開始・終了を直せます（自動判定は変わりません）。時間バーの目盛り（上の時間の行）を選んで <kbd>←</kbd><kbd>→</kbd> キーを押すと、対象の再生位置が1秒ずつ動きます。</p>
         <p class="hint timeline-hint repeat-note">同じ作業が繰り返すとき、帯は回数どうしで結び、区間の移動は今の位置以降の最初の同じ作業へ移ります。</p>
       </section>
+      <details id="zeroAnalyticsDisclosure" class="card result-analytics" hidden><summary>時間の分析を見る（作業ごとの合計時間・1回ごとの長さ）</summary><div class="zero-analytics-source"><div class="segmented" role="radiogroup" aria-label="時間の分析の元データ"><button type="button" role="radio" data-st-source="auto" aria-checked="true">自動判定</button><button type="button" role="radio" data-st-source="reviewed" aria-checked="false">修正後</button></div><p id="zeroSourceLabel" class="source-label" aria-live="polite"></p></div><section id="zeroAnalytics"></section></details>
       <details id="resultAnalyticsDisclosure" class="card result-analytics"><summary>お手本の時間の集計を見る（山積み表・分布）</summary><section id="resultAnalytics"></section></details>
     </section>
   </main>
@@ -232,6 +244,13 @@
       <p id="confirmMessage" class="dialog-description"></p>
       <div class="dialog-actions"><button id="confirmCancel" class="button secondary" value="cancel">キャンセル</button><button id="confirmAccept" class="button primary" value="confirm">続行</button></div>
     </form>
+  </dialog>
+
+  <dialog id="usageDialog" class="usage-dialog" aria-labelledby="usageTitle">
+    <h2 id="usageTitle">作業みえるの使い方</h2>
+    <ol><li>「新しい分析」で対象動画と、お手本または作業名一覧を選びます。作業者の同意と送信先を確かめて分析します。</li><li>結果は「実行履歴」から開けます。お手本なしではSTとの比較、お手本ありでは時間差を見ます。</li><li>「区間」で要確認の場所を映像で確かめます。自動判定は原本、修正後は人が直した結果です。</li><li>開始・終了は1秒単位で直せます。隣の区間は動きません。区間の追加・削除、元に戻す・やり直すも使えます。</li><li>上の「保存」で修正後とメモを履歴へ残します。JSONの書き出しは「メモ」タブにあります。自動判定は上書きしません。</li></ol>
+    <p>ST差は時間の違いで、作業の良し悪しや長くかかった原因を判定するものではありません。合成モックの数字は実際の作業や分析精度を示しません。</p>
+    <div class="dialog-actions"><button id="closeUsage" class="button secondary" type="button">閉じる</button></div>
   </dialog>
 
   <div id="toast" class="toast" role="status" hidden></div>

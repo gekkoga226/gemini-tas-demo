@@ -217,6 +217,13 @@ async function createPage(session, opts) {
       return navigate(url.href);
     },
     eval: evaluate,
+    async press(key) {
+      const codes = {ArrowLeft:37,ArrowRight:39,Home:36,End:35};
+      if (!codes[key]) throw new Error(`未対応の確認用キー: ${key}`);
+      const params = {key,code:key,windowsVirtualKeyCode:codes[key],nativeVirtualKeyCode:codes[key]};
+      await session.send('Input.dispatchKeyEvent', {type:'keyDown',...params});
+      await session.send('Input.dispatchKeyEvent', {type:'keyUp',...params});
+    },
     async waitFor(expression, ms = 5000) {
       const end = Date.now() + ms;
       while (Date.now() < end) {

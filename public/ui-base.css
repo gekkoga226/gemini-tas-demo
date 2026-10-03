@@ -545,7 +545,7 @@ dialog h2 { margin: 3px 0 8px; }
   .form-grid { grid-template-columns: 1fr; }
 }
 
-@media (max-width: 620px) {
+@media (max-width: 720px) {
   .section-heading {
     align-items: stretch;
     flex-direction: column;
