@@ -7,7 +7,8 @@ export function runPresentation(run) {
   return {ended,kind,message,observe_cleanup:!['deleted','not_needed'].includes(run.cleanup?.cleanup_status)};
 }
 
-export function analysisReadiness({config,video,set,vocabulary,mode,strategy,partition='whole',settings,busy,consent}) {
+export function analysisReadiness({config,video,set,vocabulary,mode,strategy,partition='whole',settings,busy,consent,labelPolicy='closed_vocabulary.v1',reviewedStandard=null}) {
+  if(labelPolicy==='observation_open.v1'){const checks=[{key:'flow',ok:partition==='whole'&&strategy==='text_only',text:partition==='whole'&&strategy==='text_only'?'観察から作業内容を分析（一覧・識別条件は未使用）':'一覧なしの新フローは全体＋案1のみ対応。選択した組合せは未対応です。'},{key:'video',ok:Boolean(video),text:video?`${video.display_name} · ${video.duration_s}秒`:'対象動画を選んでください'},{key:'standard',ok:mode==='zero_shot'||Boolean(reviewedStandard&&reviewedStandard.source_video_sha256!==video?.sha256),text:mode==='zero_shot'?'お手本なし：レビュー後に見本を作成できます':reviewedStandard?`${reviewedStandard.name} · 保存済みレビューの不変見本。別動画を選択してください`:'レビューから確定した見本を選んでください'},{key:'consent',ok:consent,text:consent?'同意を確認済み':'作業者の同意を確認してください'},{key:'environment',ok:config?.ready===true,text:config?.ready?'接続・保存先の準備完了':'接続・保存先の条件を確認してください'}];const missing=checks.filter(c=>!c.ok);return {checks,ready:!busy&&!missing.length,message:busy?'処理中です。':missing[0]?.text??'準備ができました。分析を開始できます。'};}
   const profile=strategy==='vocabulary_guided'?'guided':'unguided';
   const descriptor=set?.description_profiles?.[profile];
   const conditions=descriptor?.conditions;

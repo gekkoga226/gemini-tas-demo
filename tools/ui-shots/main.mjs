@@ -127,8 +127,9 @@ async function latestRuns(base, runs) {
     const { runs: list } = await (await fetch(new URL('/api/analysis-runs', base), { signal: AbortSignal.timeout(10000) })).json();
     // The legacy result scenarios require tas-result.v1; experimental results
     // have their own reader and must never be treated as a missing Stage1.
-    const pick = (mode) => list.find((r) => r.result_available && r.experiment_complete == null && r.analysis_mode === mode)?.run_id ?? null;
-    return { few: runs.few ?? pick('few_shot'), zero: runs.zero ?? pick('zero_shot') };
+    const pick = (mode) => list.find((r) => r.result_available && r.experiment_complete == null && r.label_policy !== 'observation_open.v1' && r.analysis_mode === mode)?.run_id ?? null;
+    const discovery=(mode)=>list.find(r=>r.result_available&&r.label_policy==='observation_open.v1'&&r.analysis_mode===mode)?.run_id??null;
+    return { few: runs.few ?? pick('few_shot'), zero: runs.zero ?? pick('zero_shot'),discovery:discovery('few_shot'),discoveryZero:discovery('zero_shot') };
   } catch {
     return runs;
   }

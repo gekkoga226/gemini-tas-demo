@@ -14,10 +14,16 @@ async function fixture(kind, port) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'tas-launch real-'));
   await fs.mkdir(path.join(root, 'scripts'));
   await fs.mkdir(path.join(root, 'bin'));
+  await fs.mkdir(path.join(root, 'src'));
+  await fs.mkdir(path.join(root, 'public'));
+  await fs.mkdir(path.join(root, 'prompts'));
+  await fs.copyFile(new URL('../src/implementation.js', import.meta.url), path.join(root, 'src/implementation.js'));
+  await fs.copyFile(new URL('../scripts/implementation-fingerprint.mjs', import.meta.url), path.join(root, 'scripts/implementation-fingerprint.mjs'));
+  await fs.writeFile(path.join(root,'package.json'), JSON.stringify({type:'module'}));
   await fs.copyFile(new URL('../start-app-real.bat', import.meta.url), path.join(root, 'start-app-real.bat'));
   await fs.copyFile(new URL('../scripts/start-real.ps1', import.meta.url), path.join(root, 'scripts/start-real.ps1'));
   await fs.writeFile(path.join(root, 'bin/gcloud.cmd'), '@exit /b 0\r\n');
-  await fs.writeFile(path.join(root, 'server.js'), `require('fs').writeFileSync('launched.json',JSON.stringify({mode:process.env.MOCK_MODE,port:process.env.PORT,data:process.env.DATA_ROOT,cwd:process.cwd()}));`);
+  await fs.writeFile(path.join(root, 'server.js'), `import fs from 'node:fs';fs.writeFileSync('launched.json',JSON.stringify({mode:process.env.MOCK_MODE,port:process.env.PORT,data:process.env.DATA_ROOT,cwd:process.cwd()}));`);
   if (kind === 'env') {
     await fs.writeFile(path.join(root, 'real-connection.env'), `MOCK_MODE=true\nPORT=${port}\nDATA_ROOT=must-not-use\nGEAP_ENVIRONMENT_CONFIRMED=true\n`);
   } else {
@@ -104,7 +110,7 @@ for (const kind of ['env', 'legacy']) {
   });
 }
 
-for (const mismatch of [null, 'workspace', 'data', 'pid', 'mode']) {
+for (const mismatch of [null, 'workspace', 'data', 'pid', 'mode', 'version', 'assets', 'features']) {
   test(`reusing a REAL server requires matching workspace, data root and worker (${mismatch || 'matching'})`, {skip: process.platform !== 'win32'}, async t => {
     const {root, env} = await fixture('env', 1);
     t.after(() => fs.rm(root, {recursive: true, force: true}));
@@ -116,9 +122,11 @@ for (const mismatch of [null, 'workspace', 'data', 'pid', 'mode']) {
     if (mismatch === 'workspace') identity.workspace_sha256 = hash(root + '-old-checkout');
     if (mismatch === 'data') identity.data_root_sha256 = hash(data + '-other-data');
     if (mismatch === 'pid') identity.pid += 1;
+    const fingerprint=(await exec(process.execPath,[path.join(root,'scripts/implementation-fingerprint.mjs')],{cwd:root})).stdout;
+    const implementation={fingerprint:mismatch==='version'?'0'.repeat(64):fingerprint,features:mismatch==='features'?[]:['observation-review-cycle.v1'],assets_consistent:mismatch!=='assets'};
     const server = http.createServer((request, response) => {
       response.setHeader('content-type', 'application/json');
-      response.end(JSON.stringify({mode: mismatch === 'mode' ? 'mock' : 'geap', launcher: identity}));
+      response.end(JSON.stringify({mode: mismatch === 'mode' ? 'mock' : 'geap', launcher: identity,implementation}));
     });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     t.after(() => new Promise(resolve => server.close(resolve)));

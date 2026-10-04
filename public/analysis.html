@@ -33,8 +33,8 @@
           <div class="registered-choice"><label for="registeredVideo">登録済み動画から選ぶ</label><select id="registeredVideo"><option value="">動画を選択</option></select><p id="videoMeta" role="status">動画はまだ選ばれていません</p></div>
         </div>
         <div class="section-heading input-step"><div class="heading-copy"><span class="step">2</span><div><h2 id="referenceTitle">照合方法を選ぶ</h2><p id="modeHelp" class="section-caption">公開済みのお手本と対象動画を照合します。</p></div></div><button id="manageSets" class="icon-button" type="button">お手本を登録・確認</button></div>
-        <div class="view-tabs" role="group" aria-label="分析の目的"><button id="fewShotTab" class="tab active" aria-pressed="true" type="button">お手本と照合</button><button id="zeroShotTab" class="tab" aria-pressed="false" type="button">お手本なしで分析</button></div>
-        <div class="form-grid"><label id="standardChoice">公開済みのお手本セット<select id="standardSet"><option value="">選択してください</option></select></label><label id="vocabularyChoice" hidden>確認済みの作業名一覧<select id="vocabularySelect"><option value="">選択してください</option></select></label></div><p id="pdfMeta" class="hint">お手本セット未選択</p>
+        <label>分析の目的<select id="labelPolicy"><option value="observation_open.v1">観察から作業内容を分析（一覧の準備不要）</option><option value="closed_vocabulary.v1">確認済み一覧へ分類（従来方式・比較用）</option></select></label><div class="view-tabs" role="group" aria-label="お手本の有無"><button id="fewShotTab" class="tab active" aria-pressed="true" type="button">お手本と照合</button><button id="zeroShotTab" class="tab" aria-pressed="false" type="button">お手本なしで分析</button></div>
+        <div class="form-grid"><label id="standardChoice">公開済みのお手本セット<select id="standardSet"><option value="">選択してください</option></select></label><label id="vocabularyChoice" hidden>確認済みの作業名一覧<select id="vocabularySelect"><option value="">選択してください</option></select></label></div><label id="reviewedStandardChoice" hidden>レビューから確定した見本<select id="reviewedStandard"><option value="">見本を選択</option></select></label><p id="pdfMeta" class="hint">お手本セット未選択</p>
         <label class="strategy-label" for="videoPartition">動画の分割方式</label>
         <select id="videoPartition"><option value="whole">動画全体を処理</option><option value="chunked">短く分割して結果を統合（実験用）</option></select>
         <label class="strategy-label" for="analysisStrategy">作業の分析方式</label>
@@ -68,6 +68,7 @@
       <button id="retryRun" class="button secondary" type="button" hidden>保存済み入力から新しい実行で再試行</button>
     </section>
 
+    <section id="discoveryResult" class="card input-card" hidden aria-label="観察からの分析とレビュー"></section>
     <section id="experimentResult" class="card input-card" hidden aria-label="実験結果"><h2>実験用の仮結果</h2><p id="experimentSummary"></p><div id="experimentSegments"></div></section>
 
     <section id="setManager" class="card input-card" hidden aria-labelledby="setManagerTitle">

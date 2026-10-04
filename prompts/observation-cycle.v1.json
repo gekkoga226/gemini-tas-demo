@@ -1,0 +1,16 @@
+{
+  "release": "observation-cycle.v1",
+  "pairs": {},
+  "prompts": {
+    "naming": {
+      "file": "observation-cycle-naming.v1.md",
+      "version": "observation-naming.v1",
+      "sha256": "6e87ab94435d7a7d2bcba7a1423c401ddfe1f8555cd8640263dd7983f52a83c4"
+    },
+    "alignment": {
+      "file": "observation-cycle-alignment.v1.md",
+      "version": "observation-alignment.v1",
+      "sha256": "f6f8f2b16f1e2c5b1277d157fb432116f86b080e1c58bd84dec9038b0bf25491"
+    }
+  }
+}

@@ -8,6 +8,7 @@ import { createMockPrediction, preparePrediction } from "./src/schema.js";
 import { TasService } from './src/pipeline.js';
 import { tasConfig } from './src/settings.js';
 import { routeTas } from './src/routes.js';
+import {STARTUP_FINGERPRINT,FEATURES,implementationAssetsConsistent} from './src/implementation.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_ROOT = path.join(ROOT, "public");
@@ -102,10 +103,12 @@ export function createAppServer(config = loadConfig(), options = {}) {
     if (origin && origin !== `http://${host}`) return writeJson(response, 403, { code: "ORIGIN_REJECTED", message: "許可されていない接続元です。" });
 
     const url = new URL(request.url, `http://${host}`);
+    const assetsConsistent = implementationAssetsConsistent();
     if (request.method === "GET" && url.pathname === "/api/health") {
       const launchHash = value => crypto.createHash('sha256').update(path.resolve(value).toLowerCase()).digest('hex');
-      return writeJson(response, 200, { ok: true, mode: config.mockMode ? "mock" : "geap", api_version:'v1beta1', launcher: {pid:process.pid,workspace_sha256:launchHash(ROOT),data_root_sha256:launchHash(config.dataRoot || 'data')} });
+      return writeJson(response, 200, { ok: true, mode: config.mockMode ? "mock" : "geap", api_version:'v1beta1', implementation:{fingerprint:STARTUP_FINGERPRINT,features:FEATURES,assets_consistent:assetsConsistent}, launcher: {pid:process.pid,workspace_sha256:launchHash(ROOT),data_root_sha256:launchHash(config.dataRoot || 'data')} });
     }
+    if(!assetsConsistent)return writeJson(response,409,{code:'IMPLEMENTATION_CHANGED',message:'起動後に実装が変わりました。処理と媒体回収状態を確認し、このサーバーを手動で停止して再起動してください。'});
     if (request.method === "GET" && url.pathname === "/api/session") {
       return writeJson(response, 200, {
         token: sessionToken,
