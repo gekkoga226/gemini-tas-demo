@@ -55,7 +55,7 @@
 
 実API adapter、実モデル/APIごとの入力支持範囲・所在地・料金、実動画の品質・費用、80／120分・16GB性能、実際のVFR・非ゼロ原点媒体の物理対応は未実装または未実測。サーバーの合成フラグとPTS検証は、実動画対応の代用ではない。実動画へ進むには専用API adapter・制約検査・既知イベント入りVFR／非ゼロ原点媒体による物理PTS検証・必要な継ぎ目裁定と独立review契約を別途実装／確認する。
 
-継ぎ目の自動裁定・継続証拠による出現結合・実験結果の人修正は未対応。原因別の選択的再解析と保留中の別UI作業は追加していない。実接続、実動画利用、クラウド作成、merge、本番更新は行わない。
+継ぎ目の自動裁定・継続証拠による出現結合・実験結果の人修正は未対応。原因別の選択的再解析と保留中の別UI作業は追加していない。上記の合成実験レビューでは実接続、実動画利用、クラウド作成、merge、本番更新を行っていない。
 
 ## ローカル合成モックの再現
 
@@ -79,3 +79,15 @@ npm.cmd start
 ## 変更ファイル
 
 `public/analysis.html`、`public/analysis-state.js`、`public/fewshot.js`、`src/pipeline.js`、`src/routes.js`、`src/flow-experiment.js`、`src/media.js`、`src/mock-model.js`、`prompts/joint_experiment_v1.md`、`prompts/joint_experiment.v1.json`、`test/flow-experiment.test.js`、`tools/ui-shots/main.mjs`、`docs/README.md`、`docs/2026-10-04_FLOW_EXPERIMENT_CONTRACT.md`、本記録。利用者の未追跡モック資産は含めない。
+
+## 追補：プレビューと実接続起動口の一致
+
+元フォルダーの古いブランチから `start-app-real.bat` を起動すると、ワークツリーの二軸UIは反映されなかった。利用者が指定した元フォルダーのバッチのみ、レビュー対象ワークツリーへ委譲するローカル起動口に変更した。元フォルダーのブランチ・HEAD・その他の既存変更は保全した。このローカル委譲は別チェックアウトの設定であり、PRの変更には含めない。委譲前のバッチはワークツリーの `.local/start-app-real.parent-before-a3.bat` に保管した。
+
+PR内の起動口は `scripts/start-real.ps1` に設定読取を集約し、使用中ポートの無条件強制終了を廃止した。起動元のPORTとDATA_ROOTを優先し、実接続モードを強制する。`-ReuseExisting -OpenBrowser` を付けた場合だけ、起動元・保存先のSHAとworker.lockのPIDが一致した実接続サーバーを再利用する。別の起動元・保存先・PID・モックサーバーは拒否する。新規起動時は最大45秒の待機内で同じ起動元・保存先のサーバーが待受を開始してからブラウザーを開く。再利用で動画・runの登録やAPI送信は発生しない。
+
+今回の追加検証は `node --test test/start-real.test.js test/server.test.js` 13/13、`npm.cmd test` 178/178、`npm.cmd run probe:self-test` LOCAL_TESTS_PASSED。13件にはポート競合、設定元2種、明示した保存先・ポートの優先、モード強制、再利用条件の不一致拒否、healthが保存先を初期化せず生パスを公開しないことを含む。前回の172件とは別の実行結果である。
+
+指定された元フォルダーのバッチから新規起動と再利用を実行し、同じ保存先・PID、配信HTMLとワークツリー内ファイルの一致、登録済み50秒MP4の保全を確認。ブラウザーで二軸表示と選択の独立性、実動画での分割実験の停止理由を確認した。実接続モードの設定・認証取得とローカル登録までで、同意確認と作業名一覧の回答待ちのため実動画のAPI分析は未実施。新経路の実API adapter・品質・費用・長尺性能の未実装／未実測を解消したという記録ではない。クラウド資源作成・merge・クラウド本番更新は行っていない。
+
+追加変更は `start-app-real.bat`、`scripts/start-real.ps1`、`real-connection.env.example`、`server.js`、`test/start-real.test.js`、`test/server.test.js`、`docs/FEWSHOT_OPERATIONS.md`、本記録。起動手順・設定優先度は運用手順を参照する。
