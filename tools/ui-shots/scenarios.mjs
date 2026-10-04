@@ -13,7 +13,14 @@ async function openResult(page, runId, allowEmpty = false) {
   await page.settle(800);
 }
 
+async function openDiscovery(page,runId){await page.goto('/analysis.html?new=1');await page.eval(`localStorage.setItem('tas-active-run', ${JSON.stringify(runId)})`);await page.goto('/analysis.html');if(!await page.waitFor("!document.querySelector('#discoveryResult')?.hidden && document.querySelectorAll('[data-discovery-segment]').length>0",20000))throw new Error('観察分析の結果が表示されません');await page.eval("document.querySelector('#discoveryResult').scrollIntoView({block:'start'})");await page.settle();}
+
 export const SCENARIOS = {
+  'b-discovery':{title:'観察からの作業分析と対応候補',scope:['#discoveryResult'],needs:'discovery',run:page=>openDiscovery(page,page.runs.discovery)},
+  'b-discovery-zero':{title:'観察からの作業分析と保存済みレビュー',scope:['#discoveryResult'],needs:'discoveryZero',run:page=>openDiscovery(page,page.runs.discoveryZero)},
+  'b-discovery-review':{title:'観察の編集と確認範囲',scope:['#discoveryResult'],needs:'discovery',full:false,async run(page){await openDiscovery(page,page.runs.discovery);await page.eval("document.querySelector('[data-discovery-segment]').scrollIntoView({block:'start'})");await page.settle();}},
+  'b-discovery-standard':{title:'保存済みレビューから見本作成',scope:['#discoveryResult'],needs:'discoveryZero',full:false,async run(page){await openDiscovery(page,page.runs.discoveryZero);await page.eval("document.querySelector('.discovery-standard').scrollIntoView({block:'center'})");await page.settle();}},
+  'b-discovery-library':{title:'レビュー由来見本ライブラリ',scope:['#setManager'],full:false,async run(page){await page.goto('/analysis.html?new=1#library');await page.waitFor("document.querySelector('#reviewedStandardLibrary details')",8000);await page.eval("document.querySelector('#reviewedStandardLibrary details').open=true;document.querySelector('#reviewedStandardLibrary').scrollIntoView({block:'start'})");await page.settle();}},
   'b-new': {
     title: 'B 新しい分析', scope: ['.work-return', '.app-header', '.analysis-launch', '.status-card'],
     async run(page) {

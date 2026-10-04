@@ -38,6 +38,8 @@ try {
     throw 'PORT must be an integer between 1 and 65535.'
   }
   $taskNode = (Get-Command node -ErrorAction Stop).Source
+  $taskFingerprint = & $taskNode (Join-Path $taskRoot 'scripts/implementation-fingerprint.mjs')
+  if ($LASTEXITCODE -ne 0 -or $taskFingerprint -notmatch '^[a-f0-9]{64}$') { throw 'Cannot verify implementation fingerprint. Restore this reviewed checkout.' }
   if ($env:GEAP_AUTH_MODE -ne 'service_account') {
     Get-Command gcloud.cmd -ErrorAction Stop | Out-Null
   }
@@ -57,11 +59,11 @@ try {
       try {
         $taskHealth = Invoke-RestMethod -Uri "http://127.0.0.1:$taskPort/api/health" -TimeoutSec 3
         $taskLock = Get-Content -Raw -LiteralPath (Join-Path $env:DATA_ROOT 'worker.lock') | ConvertFrom-Json
-        $taskAlreadyRunning = $taskHealth.mode -eq 'geap' -and $taskHealth.launcher.pid -eq $taskLock.pid -and $taskHealth.launcher.workspace_sha256 -ceq $taskRootHash -and $taskHealth.launcher.data_root_sha256 -ceq $taskDataHash
+        $taskAlreadyRunning = $taskHealth.mode -eq 'geap' -and $taskHealth.launcher.pid -eq $taskLock.pid -and $taskHealth.launcher.workspace_sha256 -ceq $taskRootHash -and $taskHealth.launcher.data_root_sha256 -ceq $taskDataHash -and $taskHealth.implementation.fingerprint -ceq $taskFingerprint -and $taskHealth.implementation.assets_consistent -eq $true -and $taskHealth.implementation.features -contains 'observation-review-cycle.v1'
       } catch { $taskAlreadyRunning = $false }
     }
     if (!$taskAlreadyRunning) {
-      throw "Port $taskPort is unavailable. Leave the existing process running and choose another PORT."
+      throw "Port $taskPort is unavailable or the server mode, workspace, data root, PID, implementation version or assets do not match. Leave it running. Check active runs and cleanup, stop it manually with Ctrl+C in its own terminal, then restart; or choose another PORT and DATA_ROOT."
     }
   } finally {
     $taskProbe.Stop()
@@ -78,13 +80,13 @@ try {
   if ($OpenBrowser) {
     # Open only after this server is listening; never open an old page or a
     # connection-error page while authentication/tool checks are still running.
-    $taskBrowserJob = Start-Job -ArgumentList $taskPort,$taskRootHash,$taskDataHash -ScriptBlock {
-      param($taskBrowserPort,$taskBrowserRootHash,$taskBrowserDataHash)
+    $taskBrowserJob = Start-Job -ArgumentList $taskPort,$taskRootHash,$taskDataHash,$taskFingerprint -ScriptBlock {
+      param($taskBrowserPort,$taskBrowserRootHash,$taskBrowserDataHash,$taskBrowserFingerprint)
       $taskDeadline = [DateTime]::UtcNow.AddSeconds(45)
       while ([DateTime]::UtcNow -lt $taskDeadline) {
         try {
           $taskReady = Invoke-RestMethod "http://127.0.0.1:$taskBrowserPort/api/health" -TimeoutSec 1
-          if ($taskReady.mode -eq 'geap' -and $taskReady.launcher.workspace_sha256 -ceq $taskBrowserRootHash -and $taskReady.launcher.data_root_sha256 -ceq $taskBrowserDataHash) {
+          if ($taskReady.mode -eq 'geap' -and $taskReady.launcher.workspace_sha256 -ceq $taskBrowserRootHash -and $taskReady.launcher.data_root_sha256 -ceq $taskBrowserDataHash -and $taskReady.implementation.fingerprint -ceq $taskBrowserFingerprint -and $taskReady.implementation.assets_consistent -eq $true) {
             Start-Process "http://127.0.0.1:$taskBrowserPort/analysis.html?new=1"
             return
           }

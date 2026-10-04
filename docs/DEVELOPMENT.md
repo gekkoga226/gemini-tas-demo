@@ -46,3 +46,9 @@ node tools/ui-shots/shoot.mjs --base http://127.0.0.1:4186 --scenarios page --pa
 - 結果画面は、実行履歴で最新の完了分を使う（`--few-run`・`--zero-run` で指定）。該当がなければ省略する。空の一時フォルダで起動した直後は実行履歴がないので、結果画面も撮るときは、先にモックの画面で「合成サンプルで試す」から分析を実行しておく（操作は [操作ガイド](USER_GUIDE.md)）。
 - 終了コード：0 正常、1 違反あり（`--strict` のとき）、2 指定・環境の誤り、3 撮影できない画面あり。Git Bash では `/` で始まる引数が書き換えられるため、`MSYS_NO_PATHCONV=1` を付ける。
 - 自動チェックは目安で、目視の確認を置き換えない。コントラストは文字の大きさによらず4.5:1で判定し、画像・グラデーション・動画の上の文字と無効化された操作は「対象外」として別に数える。
+
+## 観察分析・レビュー由来見本の検証
+
+追加契約は[観察レビュー往復](2026-10-04_OBSERVATION_REVIEW_CYCLE_CONTRACT.md)。関連テストは `node --test test/discovery-cycle.test.js test/implementation-assets.test.js test/start-real.test.js test/glossary.test.js`。REAL adapter・HTTP経路は通信・認証・クラウドを置換し、TEMP保存先で検証します。資産欠落・読取失敗の検証は専用TEMPの隔離コピーだけで行います。従来の8組合せはflow-experiment/fewshotの回帰検証を継続します。
+
+`tools/ui-shots`の追加シナリオはb-discovery、b-discovery-zero、b-discovery-review、b-discovery-standard、b-discovery-library。空の専用TEMPでA→review→見本→Bを操作した後、その専用モックを撮影対象にします。従来の結果シナリオは新契約を選択しません。今回の検証と再現手順は[報告](2026-10-05_OBSERVATION_REVIEW_CYCLE_REPORT.md)。

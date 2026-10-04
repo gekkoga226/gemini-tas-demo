@@ -20,10 +20,14 @@ export async function streamFile(request,response,file,mime) {
 export async function routeTas(request,response,url,service,json) {
   await service.ready;const p=url.pathname,m=request.method;
   if(m==='GET'&&p==='/api/config'){json(response,200,{...service.environment,settings:defaultSettings(service.config),limits:{max_upload_bytes:service.config.maxUploadBytes,min_free_bytes:service.config.minFreeBytes},fault_injection_enabled:service.config.allowFaults});return;}
+  if(m==='GET'&&p==='/api/reviewed-standards'){json(response,200,{standards:await service.reviewedStandards()});return;}
+  if(m==='POST'&&p==='/api/reviewed-standards'){json(response,201,await service.createReviewedStandard(await readBody(request)));return;}
   if(m==='GET'&&p==='/api/media'){json(response,200,{media:await service.mediaList()});return;}
   if(m==='POST'&&p==='/api/media'){const mime=request.headers['content-type']?.split(';')[0];const name=decodeURIComponent(request.headers['x-display-name']||'登録媒体');const a=await service.media.register(request,mime,name);const {asset_ref,...publicAsset}=a;json(response,201,publicAsset);return;}
+  let reviewedMatch=p.match(/^\/api\/reviewed-standards\/([^/]+)$/);if(m==='GET'&&reviewedMatch){json(response,200,await service.getReviewedStandard(reviewedMatch[1]));return;}
   let match=p.match(/^\/api\/media\/([^/]+)\/content$/);
   if(m==='GET'&&match){const a=await service.getMedia(match[1]);await streamFile(request,response,service.store.resolve(a.asset_ref),a.mime_type);return;}
+  if(m==='POST'&&p==='/api/discovery-fixture'){demand(service.config.mockMode,'MOCK_ONLY','合成サンプルはモック専用です。');const a=await service.media.syntheticVideo(24,'合成動画A・見本作成用'),b=await service.media.syntheticVideo(30,'合成動画B・照合用');json(response,201,{video_a:a.video_id,video_b:b.video_id});return;}
   if(m==='POST'&&p==='/api/demo-fixture'){json(response,202,await service.demo());return;}
   if(m==='GET'&&p==='/api/vocabularies'){json(response,200,{vocabularies:await service.vocabularies()});return;}
   if(m==='POST'&&p==='/api/vocabularies'){const b=await readBody(request);json(response,201,await service.registerVocabulary(b.vocabulary,b.discriminators,b));return;}
