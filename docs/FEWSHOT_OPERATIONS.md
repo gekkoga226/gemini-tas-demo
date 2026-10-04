@@ -82,6 +82,8 @@ Windowsでは同じ値を `real-connection.env.example` から作る `real-conne
 
 `start-app-real.bat -ReuseExisting -OpenBrowser` は、同じワークスペース・保存先の実接続サーバーだけを再利用してブラウザーを開く。`/api/health` の起動元・保存先のSHAと、保存先の `worker.lock` のPIDが一致しない使用中ポートは拒否する。別のワークツリーの画面を使う場合はそのワークツリーの起動口を指定する。古いチェックアウトでバッチを起動しても、新しいUIのコードは自動で反映されない。
 
+同じバッチを元フォルダーへコピーして起動口を更新できる。元フォルダーに新しい `scripts/start-real.ps1` がない場合は `.claude/worktrees/ui-rebuild/` の起動口へ委譲する。引数なしの起動には `-ReuseExisting -OpenBrowser` を付け、引数がある場合は指定されたものだけを引き継ぐ。委譲先がない場合は失敗終了し、旧サーバーを起動しない。新しいhelperがあるチェックアウトでは自身の起動口を使用する。起動口のコピーはソース全体の更新やブランチ切替ではない。コピー前に対象バッチを退避し、他の既存変更・データを保全する。
+
 必要なら `GEAP_HOST` でHTTPSの接続先ホストを指定する。未指定時は `GEAP_LOCATION=global` なら `https://aiplatform.googleapis.com`、それ以外は `https://{location}-aiplatform.googleapis.com` を構成する。2026-09-12〜13にglobalホスト／v1beta1／gemini-3.6-flashの実呼び出しを確認済み。先行測定では同モデルのus-central1呼び出しは404であり、モデル一覧への掲載を地域エンドポイントでの実行可否と同一視しない。実行時の組合せは履歴に保存する。
 
 各API試行直前にgcloudからtokenを取得し、401は1回再取得、403は反復しない。429/5xxは5秒・20秒、Retry-Afterが長ければそれを優先し2回まで。1回60分・全体3時間は停止条件であり、期待性能ではない。送信後timeout/切断は結果不明として自動再送しない。実接続の失敗をモックへ切り替えない。WindowsではCloud SDKのbinがサーバープロセスのPATHに必要。インストール前から開いているシェルではPATHを反映してから起動する。

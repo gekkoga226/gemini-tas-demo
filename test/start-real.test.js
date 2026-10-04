@@ -32,6 +32,47 @@ async function listening() {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   return server;
 }
+
+async function delegatedFixture(root) {
+  const child = path.join(root, '.claude/worktrees/ui-rebuild');
+  await fs.mkdir(path.join(child, 'scripts'), {recursive:true});
+  await fs.writeFile(path.join(child, 'scripts/start-real.ps1'), '# delegation marker');
+  await fs.writeFile(path.join(child, 'start-app-real.bat'), '@echo off\r\n> "%~dp0forwarded.txt" echo %*\r\nexit /b 7\r\n');
+  return child;
+}
+
+test('parent entry point delegates to the reviewed workspace and propagates its failure', {skip:process.platform !== 'win32'}, async t => {
+  const {root, env} = await fixture('env', 1);
+  t.after(() => fs.rm(root, {recursive:true, force:true}));
+  await fs.rm(path.join(root, 'scripts/start-real.ps1'));
+  const child = await delegatedFixture(root);
+  for (const args of ['', ' -ReuseExisting -OpenBrowser', ' -CallerMarker']) {
+    await assert.rejects(exec('cmd.exe', ['/d', '/c', 'start-app-real.bat' + args], {cwd:root, env, windowsHide:true, timeout:15000}), error => error.code === 7);
+    assert.equal((await fs.readFile(path.join(child, 'forwarded.txt'), 'utf8')).trim(), args.trim() || '-ReuseExisting -OpenBrowser');
+  }
+  await assert.rejects(fs.access(path.join(root, 'launched.json')));
+});
+
+test('missing reviewed workspace fails without starting the older parent server', {skip:process.platform !== 'win32'}, async t => {
+  const {root, env} = await fixture('env', 1);
+  t.after(() => fs.rm(root, {recursive:true, force:true}));
+  await fs.rm(path.join(root, 'scripts/start-real.ps1'));
+  await assert.rejects(exec('cmd.exe', ['/d', '/c', 'start-app-real.bat'], {cwd:root, env, windowsHide:true, timeout:15000}), error => error.code === 1 && /No fallback to the old UI/.test(error.stdout));
+  await assert.rejects(fs.access(path.join(root, 'launched.json')));
+});
+
+test('a modern checkout uses its own launcher even when another worktree exists', {skip:process.platform !== 'win32'}, async t => {
+  const {root, env} = await fixture('env', 1);
+  t.after(() => fs.rm(root, {recursive:true, force:true}));
+  const child = await delegatedFixture(root);
+  const free = await listening();
+  const port = free.address().port;
+  await new Promise(resolve => free.close(resolve));
+  await exec('cmd.exe', ['/d', '/c', 'start-app-real.bat'], {cwd:root, env:{...env,PORT:String(port)}, windowsHide:true, timeout:15000});
+  assert.equal(JSON.parse(await fs.readFile(path.join(root, 'launched.json'), 'utf8')).cwd, root);
+  await assert.rejects(fs.access(path.join(child, 'forwarded.txt')));
+});
+
 for (const kind of ['env', 'legacy']) {
   test(`real launcher preserves an occupied port and fails before starting (${kind})`, {skip: process.platform !== 'win32'}, async t => {
     const server = await listening();
