@@ -3,8 +3,28 @@ import assert from "node:assert/strict";
 import { once } from "node:events";
 import { createAppServer } from "../server.js";
 import { callGeminiText } from "../src/gemini.js";
+import crypto from 'node:crypto';
+import path from 'node:path';
+import os from 'node:os';
+import fs from 'node:fs/promises';
+import {fileURLToPath} from 'node:url';
 
 const PORT = 43917;
+
+test('launcher health identifies the workspace and data root without initializing storage or exposing paths', async t => {
+  const dataRoot = path.join(os.tmpdir(), 'tas-launch-health-' + crypto.randomUUID());
+  const server = createAppServer({mockMode:false, port:PORT + 3, dataRoot});
+  server.listen(PORT + 3, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(() => server.close());
+  t.after(() => fs.rm(dataRoot, {recursive:true, force:true}));
+  const health = await (await fetch(`http://127.0.0.1:${PORT + 3}/api/health`)).json();
+  const hash = value => crypto.createHash('sha256').update(path.resolve(value).toLowerCase()).digest('hex');
+  assert.deepEqual(health.launcher, {pid:process.pid, workspace_sha256:hash(fileURLToPath(new URL('..', import.meta.url))), data_root_sha256:hash(dataRoot)});
+  assert.equal(health.mode, 'geap');
+  assert.equal(JSON.stringify(health).includes(dataRoot), false);
+  await assert.rejects(fs.access(dataRoot), {code:'ENOENT'});
+});
 
 test("local mock server protects mutations and returns no IDs or secrets", async (t) => {
   const warnings = [];

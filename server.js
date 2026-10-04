@@ -103,7 +103,8 @@ export function createAppServer(config = loadConfig(), options = {}) {
 
     const url = new URL(request.url, `http://${host}`);
     if (request.method === "GET" && url.pathname === "/api/health") {
-      return writeJson(response, 200, { ok: true, mode: config.mockMode ? "mock" : "geap", api_version:'v1beta1' });
+      const launchHash = value => crypto.createHash('sha256').update(path.resolve(value).toLowerCase()).digest('hex');
+      return writeJson(response, 200, { ok: true, mode: config.mockMode ? "mock" : "geap", api_version:'v1beta1', launcher: {pid:process.pid,workspace_sha256:launchHash(ROOT),data_root_sha256:launchHash(config.dataRoot || 'data')} });
     }
     if (request.method === "GET" && url.pathname === "/api/session") {
       return writeJson(response, 200, {

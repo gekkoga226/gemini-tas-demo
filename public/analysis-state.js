@@ -7,18 +7,21 @@ export function runPresentation(run) {
   return {ended,kind,message,observe_cleanup:!['deleted','not_needed'].includes(run.cleanup?.cleanup_status)};
 }
 
-export function analysisReadiness({config,video,set,vocabulary,mode,strategy,settings,busy,consent}) {
+export function analysisReadiness({config,video,set,vocabulary,mode,strategy,partition='whole',settings,busy,consent}) {
   const profile=strategy==='vocabulary_guided'?'guided':'unguided';
   const descriptor=set?.description_profiles?.[profile];
   const conditions=descriptor?.conditions;
   const incompatible=conditions&&['audio_enabled','fps','processing_mode','model_revision_scope'].some(k=>conditions[k]!==settings[k]);
+  const isExperiment=partition==='chunked'||strategy==='joint';
   const checks=[
+    {key:'flow',ok:!isExperiment||(config?.mode==='mock'&&video?.synthetic===true&&video.duration_s>0&&video.duration_s<=7200&&!settings.audio_enabled),text:isExperiment?'実験用：音声なしの合成モックのみ。実動画・実API条件は未検証':'動画全体を処理'},
     {key:'video',ok:Boolean(video),text:video?`${video.display_name} · ${video.duration_s}秒`:'対象動画を選んでください'},
     {key:'standard',ok:Boolean(set?set.status==='ready'&&descriptor&&!incompatible&&(strategy!=='visual_evidence'||mode==='zero_shot'||set.representative_images?.length>0&&!set.media_state?.images_missing):mode==='zero_shot'&&vocabulary),text:''},
     {key:'consent',ok:consent,text:consent?'同意を確認済み':'作業者の同意を確認してください'},
     {key:'environment',ok:config?.ready===true,text:config?.ready?'接続・保存先の準備完了':(config?.checks??[]).filter(c=>!c.ok).map(c=>c.message).join(' ')||'接続を確認しています'}
   ];
-  checks[1].text=checks[1].ok?(mode==='zero_shot'?(set?`${set.name}の確認済み作業名一覧を使用。お手本は送信しません`:'確認済みの作業名一覧を使用'):`${set.name} · ${set.sources?.length??1}本のお手本`):incompatible?'お手本と音声・FPSなどの設定を揃えてください':set?.media_state?.images_missing&&strategy==='visual_evidence'&&mode==='few_shot'?'代表画像が削除されています。お手本を新しいセットで作成してください':mode==='zero_shot'?'確認済みの作業名一覧を選んでください':'公開済みのお手本セットを選んでください';
+  const standardCheck=checks.find(c=>c.key==='standard');
+  standardCheck.text=standardCheck.ok?(mode==='zero_shot'?(set?`${set.name}の確認済み作業名一覧を使用。お手本は送信しません`:'確認済みの作業名一覧を使用'):`${set.name} · ${set.sources?.length??1}本のお手本`):incompatible?'お手本と音声・FPSなどの設定を揃えてください':set?.media_state?.images_missing&&strategy==='visual_evidence'&&mode==='few_shot'?'代表画像が削除されています。お手本を新しいセットで作成してください':mode==='zero_shot'?'確認済みの作業名一覧を選んでください':'公開済みのお手本セットを選んでください';
   const missing=checks.filter(c=>!c.ok);
   return {checks,ready:!busy&&!missing.length,message:busy?'処理中です。完了後に次の分析を開始できます。':missing.length?missing[0].text:'準備ができました。分析を開始できます。'};
 }

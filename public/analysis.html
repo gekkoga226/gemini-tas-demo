@@ -35,8 +35,11 @@
         <div class="section-heading input-step"><div class="heading-copy"><span class="step">2</span><div><h2 id="referenceTitle">照合方法を選ぶ</h2><p id="modeHelp" class="section-caption">公開済みのお手本と対象動画を照合します。</p></div></div><button id="manageSets" class="icon-button" type="button">お手本を登録・確認</button></div>
         <div class="view-tabs" role="group" aria-label="分析の目的"><button id="fewShotTab" class="tab active" aria-pressed="true" type="button">お手本と照合</button><button id="zeroShotTab" class="tab" aria-pressed="false" type="button">お手本なしで分析</button></div>
         <div class="form-grid"><label id="standardChoice">公開済みのお手本セット<select id="standardSet"><option value="">選択してください</option></select></label><label id="vocabularyChoice" hidden>確認済みの作業名一覧<select id="vocabularySelect"><option value="">選択してください</option></select></label></div><p id="pdfMeta" class="hint">お手本セット未選択</p>
-        <label class="strategy-label" for="analysisStrategy">分析方式（精度比較用）</label>
-        <select id="analysisStrategy"><option value="text_only">案1：項目化した文章照合</option><option value="vocabulary_guided">案2：語彙補助の文章照合</option><option value="visual_evidence">案3：映像根拠併用</option></select>
+        <label class="strategy-label" for="videoPartition">動画の分割方式</label>
+        <select id="videoPartition"><option value="whole">動画全体を処理</option><option value="chunked">短く分割して結果を統合（実験用）</option></select>
+        <label class="strategy-label" for="analysisStrategy">作業の分析方式</label>
+        <select id="analysisStrategy"><option value="text_only">案1：観察記録から判定</option><option value="vocabulary_guided">案2：作業名を参考に観察して判定</option><option value="visual_evidence">案3：映像も見て判定</option><option value="joint">新方式：区間・作業名を同時判定（実験用）</option></select>
+        <p class="hint">分割・同時判定は合成モック専用の実験です。実動画の品質は未検証。同時判定の1回は各入力単位ごとです。</p>
         <details class="settings-panel"><summary>詳細設定・方式の違い</summary><p class="hint">同じ動画・お手本・設定で方式を比較できます。案1と案3は同じ区間分割を再利用し、案2は区間分割からやり直します。案3の再判定には動画と必要な代表画像を送信します。</p><div class="form-grid"><label>処理モード<select id="processingMode"><option value="AGENTIC">agentic（要求値）</option><option value="STATIC">static</option></select></label><label>入力FPS<input id="inputFps" type="number" min="0.01" max="24" step="0.01" value="1"></label><label><input id="audioEnabled" type="checkbox">音声を含める</label><label>プロンプト版<select id="promptRelease"><option value="round18.v1">Round 18 / v1</option></select></label></div><pre id="settingsSummary"></pre></details>
       </section>
       <aside class="card launch-confirm" aria-labelledby="launchTitle">
@@ -64,6 +67,8 @@
       <p id="connectionStatus" class="hint" role="status"></p><p id="cleanupStatus">一時媒体：対象なし</p>
       <button id="retryRun" class="button secondary" type="button" hidden>保存済み入力から新しい実行で再試行</button>
     </section>
+
+    <section id="experimentResult" class="card input-card" hidden aria-label="実験結果"><h2>実験用の仮結果</h2><p id="experimentSummary"></p><div id="experimentSegments"></div></section>
 
     <section id="setManager" class="card input-card" hidden aria-labelledby="setManagerTitle">
       <div class="section-heading"><div><h2 id="setManagerTitle" tabindex="-1">お手本ライブラリ</h2><p class="section-caption">同じ作業の複数の動画を、ひとつのお手本セットにまとめます。</p></div><button id="closeSetManager" class="icon-button" type="button">閉じる</button></div>
