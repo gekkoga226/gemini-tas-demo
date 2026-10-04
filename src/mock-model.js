@@ -12,6 +12,7 @@ export class MockModelAdapter {
     const started=Date.now();await onRequest({url:'mock://local/generateContent',body,model_id:'mock-gemini-contract.v1'});await delay(this.config.mockDelayMs,signal);
     let output;
     if(vocabularyExtraction)output={labels:demoVocabulary().labels.filter(l=>l.kind==='work').map(({kind,...l})=>l)};
+    else if(stage==='joint'){const count=Math.max(1,Math.min(60,Math.ceil(video.duration_s/6))),labels=input.vocabulary.filter(l=>l.kind==='work');output={schema_version:'joint.response.v1',segments:Array.from({length:count},(_,i)=>{const start_s=video.duration_s*i/count,end_s=video.duration_s*(i+1)/count,label=labels[i%labels.length]??input.vocabulary[0];return {segment_id:segmentId(i),start_s,end_s,job_no:label.job_no,job_title:label.job_title,evidence:[{start_s,end_s:Math.min(end_s,start_s+.5),description:'合成モック観察。実映像の品質を表しません。'}]};}),unresolved:[]};}
     else if(stage==='stage1') {
       const count=Math.max(1,Math.min(60,Math.ceil(video.duration_s/6)));
       const intervals=boundaries??Array.from({length:count},(_,i)=>({segment_id:segmentId(i),start_s:video.duration_s*i/count,end_s:video.duration_s*(i+1)/count}));

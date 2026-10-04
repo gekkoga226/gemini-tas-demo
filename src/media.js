@@ -97,6 +97,27 @@ export class MediaTools {
     }
     return {images,tools:versions,settings:{selection:'uniform3.v1',transform:'jpeg768.v1',quality:2,filter,arguments:args.map(a=>a===source?'SOURCE_VIDEO':a===this.store.resolve(dir+'/%06d.jpg')?'OUTPUT/%06d.jpg':a)}};
   }
+  async experimentalWindow(asset,unit,runId,cleanup,signal) {
+    demand(this.config.mockMode&&asset.synthetic===true,'EXPERIMENT_SYNTHETIC_ONLY','PTS実験は合成モック専用です。');
+    const source=this.store.resolve(asset.asset_ref),origin=asset.start_time_s??0;
+    const probe=async file=>{const data=JSON.parse((await this.command(this.config.ffprobe,['-v','error','-select_streams','v:0','-show_frames','-show_streams','-show_entries','frame=best_effort_timestamp,pkt_duration:stream=time_base','-of','json',file],signal)).stdout),base=timeBaseSeconds(data.streams?.[0]?.time_base);demand(base>0,'EXPERIMENT_PTS_UNSUPPORTED','原本time_baseが不明です。');const pts=data.frames.map(f=>Number(f.best_effort_timestamp)),times=pts.map(p=>p*base);times.native_pts=pts;times.frame_durations=data.frames.map(f=>Number(f.pkt_duration)*base);times.time_base_s=base;return times;};
+    const timestamps=await probe(source);
+    demand(timestamps.length>=2&&timestamps.every((t,i)=>Number.isFinite(t)&&timestamps.frame_durations[i]>0&&(!i||t>timestamps[i-1]&&Math.abs(t-timestamps[i-1]-timestamps.frame_durations[i-1])<=.001)),'EXPERIMENT_PTS_UNSUPPORTED','原本PTSの非単調・不連続またはフレーム時間不足は未対応です。');
+    demand(Math.abs(timestamps[0]-origin)<=.001&&Math.abs(timestamps.at(-1)+timestamps.frame_durations.at(-1)-origin-asset.duration_s)<=.001,'EXPERIMENT_PTS_UNSUPPORTED','原本PTSの原点・末尾が動画長と一致しません。');
+    const selectedIndices=timestamps.flatMap((t,i)=>t-origin>=unit.window_start_s&&t-origin<unit.window_end_s?[i]:[]),selected=selectedIndices.map(i=>timestamps[i]);
+    demand(selected.length>=2&&selected.every((t,i)=>Number.isFinite(t)&&(!i||t>selected[i-1])),'EXPERIMENT_PTS_UNSUPPORTED','フレーム不足またはPTS非単調です。');
+    const ref=`temporary/${runId}/${id()}.mp4`;await fs.mkdir(path.dirname(this.store.resolve(ref)),{recursive:true});const entry=await cleanup.registerLocal(ref,runId);
+    const filter=`trim=start=${unit.window_start_s}:end=${unit.window_end_s},setpts=PTS-STARTPTS`;
+    await this.command(this.config.ffmpeg,['-nostdin','-v','error','-i',source,'-map','0:v:0','-vf',filter,'-vsync','0','-c:v','libx264','-an','-map_metadata','-1','-y',this.store.resolve(ref)],signal);
+    const derived=await probe(this.store.resolve(ref)),info=await this.inspect(this.store.resolve(ref),'video/mp4');
+    demand(derived.length===selected.length&&derived.every((t,i)=>Math.abs((t-derived[0])-(selected[i]-selected[0]))<=.001),'EXPERIMENT_PTS_UNSUPPORTED','派生映像のPTS対応が一致しません。');
+    const actualStart=selected[0]-origin,expectedEnd=actualStart+info.duration_s;
+    demand(Math.abs(expectedEnd-unit.window_end_s)<=.001,'EXPERIMENT_PTS_UNSUPPORTED','切出し末尾と原本時刻が一致しません。');
+    const hash=await hashFile(this.store.resolve(ref));await cleanup.update(entry.asset_id,{content_sha256:hash,generation:'local'});
+    const samples=selectedIndices.map((sourceIndex,i)=>({local_s:derived[i]-derived[0],pts:timestamps.native_pts[sourceIndex],derived_pts:derived.native_pts[i]}));samples.push({local_s:info.duration_s,pts:(origin+expectedEnd)/timestamps.time_base_s,boundary_sentinel:true});
+    const timeline={version:'pts-map.v1',clock:'derived_seconds',time_base_s:timestamps.time_base_s,derived_time_base_s:derived.time_base_s,source_stream:0,origin_s:origin,samples,validation:'all-frame-timestamp-deltas.v1',source_validation:'all-frame-contiguous-durations.v1',source_frame_count:timestamps.length,derived_frame_count:derived.length,requested_start_s:unit.window_start_s,requested_end_s:unit.window_end_s,actual_start_s:actualStart,actual_end_s:expectedEnd,source_sha256:asset.source_sha256??asset.sha256,derived_sha256:hash,transform:{version:'trim-pts.v1',filter,arguments:['-map','0:v:0','-vf',filter,'-vsync','0','-c:v','libx264','-an','-map_metadata','-1'],tools:await this.versions()}};
+    return {video:{...asset,...info,asset_ref:ref,sha256:hash,size_bytes:(await fs.stat(this.store.resolve(ref))).size,cleanup_asset_id:entry.asset_id},timeline};
+  }
   async syntheticVideo(duration=30,name='合成テスト動画') {
     const assetId=id(),ref=`media/${assetId}/source.mp4`;await fs.mkdir(path.dirname(this.store.resolve(ref)),{recursive:true});
     await this.command(this.config.ffmpeg,['-nostdin','-v','error','-f','lavfi','-i',`testsrc2=size=480x270:rate=10:duration=${duration}`,'-c:v','libx264','-pix_fmt','yuv420p','-an','-movflags','+faststart','-y',this.store.resolve(ref)]);

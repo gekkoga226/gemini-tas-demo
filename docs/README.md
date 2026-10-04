@@ -17,6 +17,8 @@
 | 設定・保存・実接続・中止・回収・API | [運用手順](FEWSHOT_OPERATIONS.md)：該当見出し |
 | 合成データでのGCP実接続結果 | [2026-09-12〜13実測記録](2026-09-12_GCP_CONNECTIVITY_MEASUREMENT.md)：第9章が最新の完了結果、第1〜8章は先行測定・検討の履歴 |
 | 実接続の画面付き手順 | [接続ガイド](PRODUCTION_CONNECTIVITY_GUIDE.html) |
+| 動画分割・同時判定の合成実験 | [実験追加契約](2026-10-04_FLOW_EXPERIMENT_CONTRACT.md)：現行経路との隔離、PTS対応、未対応条件 |
+| 二軸フロー実験のレビュー・ローカル再現 | [レビュー記録](2026-10-04_FLOW_REVIEW.md)：修正、今回の検証、実行範囲、未実測、起動手順 |
 | 開発時の検証 | [開発・検証手順](DEVELOPMENT.md) |
 | 実測プローブの入力・実行 | [GEAPプローブ](../tools/geap-probe/README.md) |
 | 実装状況・判断・検証実績・着手順の例外 | [実装記録](FEWSHOT_IMPLEMENTATION.md)：D1〜D10、日付付き検証記録 |
